@@ -339,6 +339,7 @@ class PlanHead_v1(BaseModule):
         for i in range(len(command)):
             command_i = command[i]
             traj = trajs[i]
+            # 根据导航命令选择相应的轨迹子集
             if command_i == 1:    # Left
                 cur_trajs.append(traj[:self.num].repeat(3, 1))
             elif command_i == 2:  # Forward
@@ -358,6 +359,7 @@ class PlanHead_v1(BaseModule):
             bev_feats = bev_feats + self.bev_adapter(bev_feats)  # residual connection
 
         # cost_volume
+        # 通过costvolume_head计算成本体积，表示每个位置的成本
         costvolume = self.costvolume_head(bev_feats).squeeze(1) # b,h,w
         # instance_occupancy
         instance_occupancy = torch.isin(sem_occupancy, self.instance_cls.to(sem_occupancy)).float()

@@ -319,7 +319,7 @@ class Drive_OccWorld(BEVFormer):
 
         # C3. BEVFormer Encoder Forward.
         # ref_bev: bs, bev_h * bev_w, c
-        ref_bev = self.pts_bbox_head(img_feats, img_metas, prev_bev, only_bev=True)
+        ref_bev = self.pts_bbox_head(img_feats, img_metas, prev_bev, only_bev=True)  # get the input
         return ref_bev
     
     def obtain_ref_bev_with_plan(self, img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj=None):
@@ -620,7 +620,7 @@ class Drive_OccWorld(BEVFormer):
         if np.random.rand() < self.random_drop_image_rate:
             img[:, -1:, ...] = torch.zeros_like(img[:, -1:, ...])
         # A2. Randomly drop previous image inputs.
-        num_frames = img.size(1)
+        num_frames = img.size(1)  # bs=1, 3[t-T, ..., t-1, t], 6=multi_frames, 3=rgb, h, w
         if np.random.rand() < self.random_drop_prev_rate:
             random_drop_prev_v2_end_idx = (
                 self.random_drop_prev_end_idx if self.random_drop_prev_end_idx is not None
@@ -653,7 +653,7 @@ class Drive_OccWorld(BEVFormer):
         if self.turn_on_plan:
             ref_sample_traj = sample_traj[:, :, 0]
             ref_real_traj = sdc_planning[:, 0]
-            ref_command = command[:, 0]
+            ref_command = command[:, 0]  # 0:Right  1:Left  2:Forward
             sem_occupancy = segmentation[0][self.future_pred_head.history_queue_length:].unsqueeze(0)   # using GT occupancy to calculate sample_traj cost during training
             sem_occupancy = F.interpolate(sem_occupancy, size=(self.bev_h, self.bev_w, self.future_pred_head.num_pred_height), mode='nearest')
             ref_sem_occupancy = sem_occupancy[:, 0]
