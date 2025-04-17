@@ -519,7 +519,7 @@ class Drive_OccWorld(BEVFormer):
     
     def compute_plan_loss(self, outs_planning, sdc_planning, sdc_planning_mask, gt_future_boxes):
         ## outs_planning, sdc_planning: under ref_lidar coord
-        pred_under_ref = torch.cumsum(outs_planning, dim=1)
+        pred_under_ref = torch.cumsum(outs_planning, dim=1)  # 用于计算张量沿指定维度的累积和
         gt_under_ref = torch.cumsum(sdc_planning, dim=1)
 
         losses_plan = self.plan_head.loss(pred_under_ref, gt_under_ref, sdc_planning_mask, gt_future_boxes)
@@ -614,7 +614,9 @@ class Drive_OccWorld(BEVFormer):
         if self.only_generate_dataset:
             return {"pseudo_loss": torch.tensor(0.0, device=img.device, requires_grad=True)}
 
-
+        if segmentation.shape[1] != self.future_pred_frame_num + 1 + self.future_pred_head.history_queue_length:
+            segmentation = segmentation[:, :self.future_pred_frame_num + 1 + self.future_pred_head.history_queue_length, ...]
+        
         # Augmentations.
         # A1. Randomly drop cur image input.
         if np.random.rand() < self.random_drop_image_rate:
@@ -657,6 +659,7 @@ class Drive_OccWorld(BEVFormer):
             sem_occupancy = segmentation[0][self.future_pred_head.history_queue_length:].unsqueeze(0)   # using GT occupancy to calculate sample_traj cost during training
             sem_occupancy = F.interpolate(sem_occupancy, size=(self.bev_h, self.bev_w, self.future_pred_head.num_pred_height), mode='nearest')
             ref_sem_occupancy = sem_occupancy[:, 0]
+            # 这里是输出当前帧的预测轨迹，如果添加reward模型，那么应该是输出多个轨迹，然后使最优的轨迹输出最大
             ref_bev, ref_pose_pred, ref_pose_loss = self.obtain_ref_bev_with_plan(img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj)
         else:
             ref_bev = self.obtain_ref_bev(img, img_metas, prev_bev)

@@ -235,7 +235,7 @@ class NuScenesWorldDatasetV1(NuScenesWorldDatasetTemplate):
         future_ego_pos = previous_queue[-1]['sdc_planning']
         future_ego_pos = np.concatenate([np.array([0.,0.,0.])[None], future_ego_pos], axis=0)
         future_ego_pos[:, 2] = future_ego_pos[:, 2] / 180 * np.pi
-        sdc_planning = future_ego_pos[1:] - future_ego_pos[:-1]
+        sdc_planning = future_ego_pos[1:] - future_ego_pos[:-1]  # 计算未来ego位置的相对变化
         sdc_planning_mask = previous_queue[-1]['sdc_planning_mask']
         command = previous_queue[-1]['command']
         # sdc_planning sdc_planning_mask command for planning

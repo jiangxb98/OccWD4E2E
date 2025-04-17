@@ -14,16 +14,33 @@ from mmdet.models import LOSSES
 
 @LOSSES.register_module()
 class PlanningLoss(nn.Module):
+    """轨迹规划损失函数，用于计算预测轨迹和真实轨迹之间的误差"""
     def __init__(self, loss_type='L2'):
+        """
+        初始化函数
+        Args:
+            loss_type: 损失类型，默认为'L2'距离
+        """
         super(PlanningLoss, self).__init__()
         self.loss_type = loss_type
     
     def forward(self, sdc_traj, gt_sdc_fut_traj, mask):
+        """
+        计算轨迹规划损失
+        Args:
+            sdc_traj: 预测的自动驾驶车辆轨迹 (B, T, 2/3)
+            gt_sdc_fut_traj: 真实的未来轨迹 (B, T, 2/3)
+            mask: 有效帧的掩码 (B, T)
+        Returns:
+            err: 计算得到的损失值
+        """
+        # 计算位置误差（x,y坐标）
         err = sdc_traj[..., :2] - gt_sdc_fut_traj[..., :2]
         err = torch.pow(err, exponent=2)
         err = torch.sum(err, dim=-1)
         err = torch.pow(err, exponent=0.5)
         err = torch.sum(err * mask)/(torch.sum(mask) + 1e-5)
+        # 如果轨迹包含朝向信息，额外计算朝向误差
         if sdc_traj.shape[2] == 3:
             yaw_err = sdc_traj[..., 2] - gt_sdc_fut_traj[..., 2]
             yaw_err = torch.pow(yaw_err, exponent=2)
@@ -35,12 +52,28 @@ class PlanningLoss(nn.Module):
 @LOSSES.register_module()
 class CollisionLoss(nn.Module):
     def __init__(self, delta=0.5, weight=1.0):
+        """
+        初始化函数
+        Args:
+            delta: 车辆边界框的膨胀量，用于安全裕度
+            weight: 损失权重
+        """        
         super(CollisionLoss, self).__init__()
-        self.w = 1.85 + delta
-        self.h = 4.084 + delta
+        self.w = 1.85 + delta  # 车辆宽度（加上安全裕度）
+        self.h = 4.084 + delta  # 车辆高度（加上安全裕度）
         self.weight = weight
     
     def forward(self, sdc_traj_all, sdc_planning_gt, sdc_planning_gt_mask, future_gt_bbox):
+        """
+        计算碰撞损失
+        Args:
+            sdc_traj_all: 预测的自动驾驶车辆轨迹 (1, 6, 2/3)
+            sdc_planning_gt: 真实的规划轨迹 (1, 6, 3)
+            sdc_planning_gt_mask: 有效帧的掩码 (1, 6)
+            future_gt_bbox: 未来帧中其他物体的边界框列表
+        Returns:
+            inter_sum: 加权后的碰撞损失
+        """
         # sdc_traj_all (1, 6, 2)
         # sdc_planning_gt (1,6,3)
         # sdc_planning_gt_mask (1, 6)
