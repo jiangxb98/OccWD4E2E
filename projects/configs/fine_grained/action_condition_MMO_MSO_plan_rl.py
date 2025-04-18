@@ -92,6 +92,12 @@ bev_h_ = 100
 bev_w_ = 100
 pred_height = 16
 
+# for reward model
+
+use_reward_model = True   # 使用奖励模型
+output_multi_traj = True  # 输出多条轨迹
+sample_traj_nums = 20     # 采样轨迹数
+
 model = dict(
     type='Drive_OccWorld',
     turn_on_flow=turn_on_flow,
@@ -101,6 +107,16 @@ model = dict(
     video_test_mode=True,
     only_generate_dataset=only_generate_dataset,
     supervise_all_future=supervise_all_future,
+
+    # Reward model config
+    use_reward_model=use_reward_model,
+    reward_model=dict(
+        type='RewardConvNet',
+        bev_h=bev_h_,
+        bev_w=bev_w_,
+        hidden_dim=_dim_,
+        fut_traj_num=future_pred_frame_num_train,
+    ),
 
     # BEV configuration.
     point_cloud_range=point_cloud_range,
@@ -312,6 +328,8 @@ model = dict(
         plan_grid_conf=plan_grid_conf,
         bev_h=bev_h_,
         bev_w=bev_w_,
+        output_multi_traj=output_multi_traj,
+        sample_traj_nums=sample_traj_nums,
         transformer=dict(
             type='PlanTransformer',
             embed_dims=_dim_,

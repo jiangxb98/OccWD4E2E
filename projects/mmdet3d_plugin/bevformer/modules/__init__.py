@@ -12,3 +12,5 @@ from .world_transformer import PredictionTransformer
 from .world_decoder import (WorldDecoder,
                             PredictionTransformerLayer,
                             PredictionMSDeformableAttention, )
+
+from .reward_model import RewardConvNet

@@ -173,13 +173,16 @@ class PlanHead_v1(BaseModule):
                  loss_planning=None,
                  loss_collision=None,
 
+                 output_multi_traj=False,
+                 sample_traj_nums=20,
                  *args,
                  **kwargs):
 
         # BEV configuration of reference frame.
         super().__init__(**kwargs)
         self.cost_function = Cost_Function(plan_grid_conf)
-
+        self.output_multi_traj = output_multi_traj
+        self.sample_traj_nums = sample_traj_nums
         # cls
         self.instance_cls = torch.tensor(instance_cls, requires_grad=False)  # 'bicycle', 'bus', 'car', 'construction', 'motorcycle', 'pedestrian', 'trailer', 'truck'
         self.drivable_area_cls = torch.tensor(drivable_area_cls, requires_grad=False)  # 'drivable_area'
@@ -373,42 +376,85 @@ class PlanHead_v1(BaseModule):
         else:
             loss = None
 
-        # select_traj
-        select_traj = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area)  # B,3
-        # select_traj -> encoder
-        select_traj = self.pose_encoder(select_traj.float()).unsqueeze(1)   # B,1,C
+        if self.output_multi_traj:
+            # select_traj
+            select_traj = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area, self.traj_nums)  # B,3
+            # select_traj -> encoder
+            select_traj = self.pose_encoder(select_traj.float()).unsqueeze(1)   # B,1,C
 
-        # bev refine
-        bs = bev_feats.shape[0]
-        dtype = bev_feats.dtype
-        bev_feats = rearrange(bev_feats, 'b c h w -> b (w h) c')
+            # bev refine
+            bs = bev_feats.shape[0]
+            dtype = bev_feats.dtype
+            bev_feats = rearrange(bev_feats, 'b c h w -> b (w h) c')
 
-        # # 1. plan_query
-        plan_query = self.plan_embedding.weight.to(dtype)
-        plan_query = plan_query[None]   
-        # navi_embed
-        navi_embed = self.navi_embedding.weight[command]
-        navi_embed = navi_embed[None]
-        # mlp_fuser
-        plan_query = torch.cat([plan_query, navi_embed], dim=-1)
-        plan_query = self.mlp_fuser(plan_query)
+            # # 1. plan_query
+            plan_query = self.plan_embedding.weight.to(dtype)
+            plan_query = plan_query[None]   
+            # navi_embed
+            navi_embed = self.navi_embedding.weight[command]
+            navi_embed = navi_embed[None]
+            # mlp_fuser
+            plan_query = torch.cat([plan_query, navi_embed], dim=-1)
+            plan_query = self.mlp_fuser(plan_query)
 
-        # 3. bev_feats
-        bev_mask = torch.zeros((bs, self.bev_h, self.bev_w),
-                               device=plan_query.device).to(dtype)
-        bev_pos = self.positional_encoding(bev_mask).to(dtype)  # bs, bev_dims, bev_h, bev_w
+            # 3. bev_feats
+            bev_mask = torch.zeros((bs, self.bev_h, self.bev_w),
+                                device=plan_query.device).to(dtype)
+            bev_pos = self.positional_encoding(bev_mask).to(dtype)  # bs, bev_dims, bev_h, bev_w
 
-        # 5. do transformer layers to get pose features.
-        plan_query = self.transformer(
-            plan_query,
-            bev_feats,
-            prev_pose=select_traj,
-            bev_pos=bev_pos,
-        )
-        
-        # 6. plan regression
-        next_pose = self.reg_branch(plan_query).view((-1, self.planning_steps, 2))   # B,mode=1,2
-        return next_pose, loss
+            # 5. do transformer layers to get pose features.
+            paln_query_list = []
+            for j in range(self.sample_traj_nums):
+                plan_query_ = self.transformer(
+                    plan_query,
+                    bev_feats,
+                    prev_pose=select_traj[:,j],
+                    bev_pos=bev_pos,
+                )
+                paln_query_list.append(plan_query_)
+            plan_query = torch.cat(paln_query_list, dim=1)  # bs, traj_nums, C
+            
+            # 6. plan regression
+            bs, sample_traj_nums, C = plan_query.shape
+            next_pose = self.reg_branch(plan_query).view((-1, self.planning_steps, 2))   # B*traj_nums,mode=1,2
+            return next_pose, loss
+        else:
+            # select_traj
+            select_traj = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area)  # B,3
+            # select_traj -> encoder
+            select_traj = self.pose_encoder(select_traj.float()).unsqueeze(1)   # B,1,C
+
+            # bev refine
+            bs = bev_feats.shape[0]
+            dtype = bev_feats.dtype
+            bev_feats = rearrange(bev_feats, 'b c h w -> b (w h) c')
+
+            # # 1. plan_query
+            plan_query = self.plan_embedding.weight.to(dtype)
+            plan_query = plan_query[None]   
+            # navi_embed
+            navi_embed = self.navi_embedding.weight[command]
+            navi_embed = navi_embed[None]
+            # mlp_fuser
+            plan_query = torch.cat([plan_query, navi_embed], dim=-1)
+            plan_query = self.mlp_fuser(plan_query)
+
+            # 3. bev_feats
+            bev_mask = torch.zeros((bs, self.bev_h, self.bev_w),
+                                device=plan_query.device).to(dtype)
+            bev_pos = self.positional_encoding(bev_mask).to(dtype)  # bs, bev_dims, bev_h, bev_w
+
+            # 5. do transformer layers to get pose features.
+            plan_query = self.transformer(
+                plan_query,
+                bev_feats,
+                prev_pose=select_traj,
+                bev_pos=bev_pos,
+            )
+            
+            # 6. plan regression
+            next_pose = self.reg_branch(plan_query).view((-1, self.planning_steps, 2))   # B,mode=1,2
+            return next_pose, loss
 
 @HEADS.register_module()
 class PlanHead_v2(BaseModule):

@@ -6,6 +6,7 @@ import copy
 import numpy as np
 import os
 import torch.nn.functional as F
+from projects.mmdet3d_plugin.bevformer.modules import reward_model
 from projects.mmdet3d_plugin.models.utils.grid_mask import GridMask
 from projects.mmdet3d_plugin.bevformer.losses.plan_reg_loss_lidar import plan_reg_loss
 from projects.mmdet3d_plugin.bevformer.utils.metric_stp3 import PlanningMetric
@@ -67,10 +68,17 @@ class Drive_OccWorld(BEVFormer):
                  _viz_pcd_flag=False,
                  _viz_pcd_path='dbg/pred_pcd',  # root/{prefix}
 
+                 use_reward_model=False,
+                 reward_model=None,
                  *args,
                  **kwargs,):
 
         super().__init__(*args, **kwargs)
+
+        self.use_reward_model = use_reward_model
+        if use_reward_model:
+            self.reward_model = builder.build_head(reward_model)
+
         # occ head
         self.future_pred_head = builder.build_head(future_pred_head)
         # flow head
@@ -340,6 +348,18 @@ class Drive_OccWorld(BEVFormer):
                 bs, hw, d = ref_sem_occupancy.shape
                 ref_sem_occupancy = ref_sem_occupancy.view(bs, self.bev_w, self.bev_h, d).transpose(1,2)
             ref_pose_pred, ref_pose_loss = self.plan_head(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj)
+            if self.use_reward_model:
+                # 使用奖励模型，选择reward最大的轨迹！
+                multi_traj_scores, _, best_traj = self.reward_model.forward_single(ref_bev, ref_sample_traj)
+                # corss entropy loss for multi_traj_scores
+                # ToDo
+                # 1. im_loss gt的loss
+
+                # 2. sim_loss, 根据世界模型的输出，计算sim_loss
+                
+                ref_pose_pred = best_traj
+                pass
+                
         elif 'v2' in self.plan_head_type:
             ref_pose_pred = self.plan_head(ref_bev, ref_command)
             ref_pose_loss = None
