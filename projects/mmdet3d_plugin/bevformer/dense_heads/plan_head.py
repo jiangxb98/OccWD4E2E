@@ -378,7 +378,7 @@ class PlanHead_v1(BaseModule):
 
         if self.output_multi_traj:
             # select_traj
-            select_traj = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area, self.traj_nums)  # B,3
+            select_traj = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area, self.sample_traj_nums)  # B,3
             # select_traj -> encoder
             select_traj = self.pose_encoder(select_traj.float()).unsqueeze(1)   # B,1,C
 
@@ -403,16 +403,16 @@ class PlanHead_v1(BaseModule):
             bev_pos = self.positional_encoding(bev_mask).to(dtype)  # bs, bev_dims, bev_h, bev_w
 
             # 5. do transformer layers to get pose features.
-            paln_query_list = []
+            plan_query_list = []
             for j in range(self.sample_traj_nums):
                 plan_query_ = self.transformer(
                     plan_query,
                     bev_feats,
-                    prev_pose=select_traj[:,j],
+                    prev_pose=select_traj[:,:,j],
                     bev_pos=bev_pos,
                 )
-                paln_query_list.append(plan_query_)
-            plan_query = torch.cat(paln_query_list, dim=1)  # bs, traj_nums, C
+                plan_query_list.append(plan_query_)
+            plan_query = torch.cat(plan_query_list, dim=1)  # bs, traj_nums, C
             
             # 6. plan regression
             bs, sample_traj_nums, C = plan_query.shape
