@@ -350,7 +350,7 @@ class Drive_OccWorld(BEVFormer):
             ref_pose_pred, ref_pose_loss = self.plan_head(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj)
             if self.use_reward_model:
                 # 使用奖励模型，选择reward最大的轨迹！
-                multi_traj_scores, _, best_traj = self.reward_model.forward_single(ref_bev, ref_sample_traj)
+                multi_traj_scores, _, best_traj = self.reward_model.forward_single(ref_bev, ref_pose_pred)
                 # corss entropy loss for multi_traj_scores
                 # ToDo
                 # 1. im_loss gt的loss

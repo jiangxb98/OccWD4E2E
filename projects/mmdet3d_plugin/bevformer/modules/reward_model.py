@@ -113,7 +113,7 @@ class RewardConvNet(nn.Module):
         fut_bev_feature = fut_bev_feature.reshape(bs, self.bev_h, self.bev_w, dims)
         fut_bev_feature = fut_bev_feature.permute(0, 3, 1, 2)
         # 展平traj
-        bs, num_traj = traj.shape[0], traj.shape[1]
+        num_traj, planning_steps, _ = traj.shape
         traj_feats = traj.reshape(-1, 2)  # [bs*num_traj, 2]
 
         reward_feats = self.conv_reward_net(fut_bev_feature)  # [bs, 256, 1, 1]
