@@ -104,7 +104,7 @@ class RewardConvNet(nn.Module):
 
         Args:
             fut_bev_feature (torch.Tensor): Future BEV feature, shape [bs, bev_h*bev_w, dims]
-            traj (torch.Tensor): Trajectory, shape [batch_size*num_traj, fut_traj_num, 2]
+            traj (torch.Tensor): Trajectory, shape [batch_size*num_traj, planning_steps, 2]
         Returns:
             torch.Tensor: Scoring features, shape [batch_size*num_traj, 128, 1, 1]
         """
@@ -129,7 +129,8 @@ class RewardConvNet(nn.Module):
         multi_traj_scores = multi_traj_scores.softmax(dim=1)
         max_reward_idx = multi_traj_scores.argmax(dim=1)
         max_reward = multi_traj_scores[:, max_reward_idx]
-        best_traj = traj[:, max_reward_idx, :]  # [bs, 1, 2]
+        traj = traj.reshape(bs, num_traj, planning_steps, 2)
+        best_traj = traj[:, max_reward_idx, :].squeeze(1)  # [bs, 1, 2]
 
         # 返回multi_traj_scores, best_traj_idx, best_traj
         # 计算损失函数的时候监督multi_traj_scores，参考WoTE的损失函数的设计

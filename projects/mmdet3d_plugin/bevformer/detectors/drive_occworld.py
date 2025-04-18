@@ -443,6 +443,11 @@ class Drive_OccWorld(BEVFormer):
                     else:   # use_gt  traning_epoch < 12
                         sem_occupancy_i = plan_dict['sem_occupancy'][:,future_frame_index]
                     pose_pred, pose_loss = self.plan_head(pred_feat[-1], sample_traj_i, sem_occupancy_i, command_i, gt_traj_i)
+                    
+                    if self.use_reward_model:
+                        multi_traj_scores, _, best_traj = self.reward_model.forward_single(ref_bev, pose_pred)
+                        pose_pred = best_traj
+                    
                     # update prev_pose and store pred
                     next_pose_preds = torch.cat([next_pose_preds, pose_pred], dim=1)
                     next_pose_loss.append(pose_loss)
