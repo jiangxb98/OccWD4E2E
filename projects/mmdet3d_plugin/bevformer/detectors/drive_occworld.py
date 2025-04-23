@@ -350,7 +350,7 @@ class Drive_OccWorld(BEVFormer):
             
             if self.use_reward_model:
                 ref_pose_pred, ref_pose_loss, multi_traj, sim_rewards = self.plan_head(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj, True)
-                im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(ref_bev, multi_traj)
+                im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(ref_bev, ref_pose_pred)
                 # 1. im_loss gt的loss
                 im_reward_loss, max_reward_idx = compute_im_reward_loss(ref_real_traj, im_traj_rewards, multi_traj)
                 # 2. sim_loss, 根据世界模型的输出，计算sim_loss

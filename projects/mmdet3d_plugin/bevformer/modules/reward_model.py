@@ -207,10 +207,10 @@ if __name__ == "__main__":
     # print(y.shape)
 
 
-    reward_conv_net = RewardConvNet(sim_reward_nums=2)
+    reward_conv_net = RewardConvNet(sim_reward_nums=1)
     fut_bev_feature = torch.randn(1, 40000, 256)
     traj = torch.randn(20, 1, 2)
-    y = reward_conv_net.forward_single_w_sim(fut_bev_feature, traj)
+    y = reward_conv_net.forward_single_im_sim(fut_bev_feature, traj)
     print(y.shape)
 
 

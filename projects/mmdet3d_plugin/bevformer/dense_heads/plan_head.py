@@ -451,7 +451,7 @@ class PlanHead_v1(BaseModule):
             if self.use_sim_reward and self.training:
                 sim_rewards = self.cal_sim_reward(select_traj_, gt_trajs, costvolume, instance_occupancy, drivable_area)
 
-            return next_pose, loss, select_traj_, sim_rewards
+            return next_pose, loss, select_traj_.to(torch.float32), sim_rewards
         else:
             # select_traj
             select_traj = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area)  # B,3
