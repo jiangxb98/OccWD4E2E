@@ -330,8 +330,8 @@ class Drive_OccWorld(BEVFormer):
         ref_bev = self.pts_bbox_head(img_feats, img_metas, prev_bev, only_bev=True)  # get the input
         return ref_bev
 
-    def plan_with_reward(self, bev, sample_traj, sem_occupancy, command, real_traj, multi_traj):
-        pose_pred, pose_loss, multi_traj, sim_rewards = self.plan_head(bev, sample_traj, sem_occupancy, command, real_traj, multi_traj)
+    def plan_with_reward(self, bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj):
+        pose_pred, pose_loss, multi_traj, sim_rewards = self.plan_head(bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj)
         im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(bev, pose_pred)
         sim_traj_rewards = sim_traj_rewards.sigmoid()
 
@@ -349,7 +349,7 @@ class Drive_OccWorld(BEVFormer):
             # max the im_traj_rewards + sim_traj_rewards
             all_rewards = im_traj_rewards + sim_traj_rewards
             max_reward_idx = all_rewards.argmax()
-            pose_pred = pose_pred[max_reward_idx]  # [bs, 1, 2]
+            pose_pred = pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
             im_reward_loss = None
             sim_reward_loss = None
 
@@ -416,10 +416,15 @@ class Drive_OccWorld(BEVFormer):
         next_bev_feats, next_bev_sem, next_pose_loss = [ref_bev], [], []
         next_pose_preds = plan_dict['ref_pose_pred'] # B,Lout,2
         next_sim_rewards, next_im_rewards = [], []
+        if plan_dict['im_reward_loss'] is not None:
+            next_im_rewards.append(plan_dict['im_reward_loss'])
+        if plan_dict['sim_reward_loss'] is not None:
+            next_sim_rewards.append(plan_dict['sim_reward_loss'])
+
         if self.training:
             reward_model_frame_idx = [self.future_pred_frame_num]
         else:
-            reward_model_frame_idx = range(1, self.future_pred_frame_num + 1)
+            reward_model_frame_idx = list(range(1, self.future_pred_frame_num + 1))
 
         # D2. Align previous frames to the reference coordinates.
         ref_img_metas = [[each[num_frames-1]] for each in prev_img_metas]
@@ -754,7 +759,8 @@ class Drive_OccWorld(BEVFormer):
             # D3. prepare action condition dict
             action_condition_dict = {'command':command, 'vel_steering': vel_steering}
             # D4. prepare planning dict
-            plan_dict = {'sem_occupancy': sem_occupancy, 'sample_traj': sample_traj, 'gt_traj': sdc_planning, 'ref_pose_pred': ref_pose_pred}
+            plan_dict = {'sem_occupancy': sem_occupancy, 'sample_traj': sample_traj, 'gt_traj': sdc_planning, 'ref_pose_pred': ref_pose_pred,
+                         'im_reward_loss': im_reward_loss, 'sim_reward_loss': sim_reward_loss}
 
             # D5. predict future occ in auto-regressive manner
             # next_pose_preds bs,num_traj,2
@@ -798,6 +804,11 @@ class Drive_OccWorld(BEVFormer):
         # if self.turn_on_flow and self.future_pred_head_flow.obj_motion_norm:
         #     losses_obj_motion_norm = self.compute_obj_motion_norm(next_bev_flow, flow)
         #     losses.update(losses_obj_motion_norm)
+
+        # E5. Compute loss for reward model
+        if self.use_reward_model:
+            losses_reward = sum(next_im_rewards)/len(next_im_rewards) + sum(next_sim_rewards)/len(next_sim_rewards)
+            losses.update(losses_reward=losses_reward)
 
         return losses
 
