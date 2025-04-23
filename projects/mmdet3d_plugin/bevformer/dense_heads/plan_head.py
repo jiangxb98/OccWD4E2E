@@ -175,6 +175,7 @@ class PlanHead_v1(BaseModule):
 
                  output_multi_traj=False,
                  sample_traj_nums=20,
+                 use_sim_reward=False,
                  *args,
                  **kwargs):
 
@@ -183,6 +184,7 @@ class PlanHead_v1(BaseModule):
         self.cost_function = Cost_Function(plan_grid_conf)
         self.output_multi_traj = output_multi_traj
         self.sample_traj_nums = sample_traj_nums
+        self.use_sim_reward = use_sim_reward
         # cls
         self.instance_cls = torch.tensor(instance_cls, requires_grad=False)  # 'bicycle', 'bus', 'car', 'construction', 'motorcycle', 'pedestrian', 'trailer', 'truck'
         self.drivable_area_cls = torch.tensor(drivable_area_cls, requires_grad=False)  # 'drivable_area'
