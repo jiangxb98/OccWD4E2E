@@ -19,11 +19,15 @@ def compute_im_reward_loss(
     """
     Bz = gt_trajectory.shape[0]
     # Get target trajectory
-    target_trajectory = gt_trajectory[:, -1, :]  # the last frame
+    if gt_trajectory.dim() == 3:
+        target_trajectory = gt_trajectory[:, -1, :]  # the last frame
+    else:
+        target_trajectory = gt_trajectory
+    
     target_trajectory = target_trajectory.reshape(Bz, -1).unsqueeze(1).float()
 
     # Calculate L2 distance between each of the 256 predefined trajectories and the target trajectory
-    num_trajs = trajectory_samples.shape[0]
+    num_trajs = trajectory_samples.shape[1]
     trajectory_samples = trajectory_samples.reshape(num_trajs, -1).unsqueeze(0).repeat(Bz, 1, 1).to(target_trajectory.device)
     l2_distances = torch.cdist(trajectory_samples, target_trajectory, p=2)  # Shape: [batch_size, 256]
     l2_distances = l2_distances.squeeze(-1)
