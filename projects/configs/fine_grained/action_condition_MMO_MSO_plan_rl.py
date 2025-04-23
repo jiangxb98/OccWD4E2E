@@ -97,7 +97,8 @@ pred_height = 16
 use_reward_model = True   # 使用奖励模型
 output_multi_traj = True  # 输出多条轨迹
 sample_traj_nums = 20     # 采样轨迹数
-use_sim_reward = True
+use_sim_reward = True     #
+sim_reward_nums = 1       # simulation reward head nums
 
 model = dict(
     type='Drive_OccWorld',
@@ -117,6 +118,7 @@ model = dict(
         bev_w=bev_w_,
         hidden_dim=_dim_,
         fut_traj_num=future_pred_frame_num_train,
+        sim_reward_nums=sim_reward_nums,
     ),
 
     # BEV configuration.
