@@ -6,6 +6,7 @@ import copy
 import numpy as np
 import os
 import torch.nn.functional as F
+from projects.mmdet3d_plugin.bevformer.losses.reward_loss import compute_im_reward_loss, compute_sim_reward_loss
 from projects.mmdet3d_plugin.bevformer.modules import reward_model
 from projects.mmdet3d_plugin.models.utils.grid_mask import GridMask
 from projects.mmdet3d_plugin.bevformer.losses.plan_reg_loss_lidar import plan_reg_loss
@@ -16,7 +17,6 @@ from torchvision.transforms.functional import rotate
 from .bevformer import BEVFormer
 from mmdet3d.models import builder
 from ..utils import e2e_predictor_utils
-
 
 @DETECTORS.register_module()
 class Drive_OccWorld(BEVFormer):
@@ -347,24 +347,29 @@ class Drive_OccWorld(BEVFormer):
                 ref_sem_occupancy = self.future_pred_head.forward_head(ref_bev.unsqueeze(0).unsqueeze(0))[-1, -1, 0].argmax(-1).detach()
                 bs, hw, d = ref_sem_occupancy.shape
                 ref_sem_occupancy = ref_sem_occupancy.view(bs, self.bev_w, self.bev_h, d).transpose(1,2)
-            ref_pose_pred, ref_pose_loss = self.plan_head(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj)
+            
             if self.use_reward_model:
-                # 使用奖励模型，选择reward最大的轨迹！
-                multi_traj_scores, _, best_traj = self.reward_model.forward_single(ref_bev, ref_pose_pred)
-                # corss entropy loss for multi_traj_scores
-                # ToDo
+                ref_pose_pred, ref_pose_loss, multi_traj, sim_rewards = self.plan_head(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj, True)
+                im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(ref_bev, multi_traj)
                 # 1. im_loss gt的loss
-
+                im_reward_loss, max_reward_idx = compute_im_reward_loss(ref_real_traj, im_traj_rewards, multi_traj)
                 # 2. sim_loss, 根据世界模型的输出，计算sim_loss
-                
-                ref_pose_pred = best_traj
-                pass
-                
+                if sim_rewards is not None:
+                    sim_reward_loss, _ = compute_sim_reward_loss(sim_rewards, sim_traj_rewards)
+                else:
+                    sim_reward_loss = None
+                # ref_pose_pred = best_traj
+                ref_pose_pred = ref_pose_pred[:, max_reward_idx, :].squeeze(1)  # [bs, 1, 2]
+            else:
+                ref_pose_pred, ref_pose_loss = self.plan_head(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj)
+                im_reward_loss = None
+                sim_reward_loss = None
+
         elif 'v2' in self.plan_head_type:
             ref_pose_pred = self.plan_head(ref_bev, ref_command)
             ref_pose_loss = None
 
-        return ref_bev, ref_pose_pred, ref_pose_loss
+        return ref_bev, ref_pose_pred, ref_pose_loss, im_reward_loss, sim_reward_loss
 
     
     def future_pred(self, prev_bev_input, action_condition_dict, cond_norm_dict, plan_dict, 
@@ -445,8 +450,7 @@ class Drive_OccWorld(BEVFormer):
                     pose_pred, pose_loss = self.plan_head(pred_feat[-1], sample_traj_i, sem_occupancy_i, command_i, gt_traj_i)
                     
                     if self.use_reward_model:
-                        multi_traj_scores, _, best_traj = self.reward_model.forward_single(ref_bev, pose_pred)
-                        pose_pred = best_traj
+                        pass
                     
                     # update prev_pose and store pred
                     next_pose_preds = torch.cat([next_pose_preds, pose_pred], dim=1)
@@ -685,7 +689,7 @@ class Drive_OccWorld(BEVFormer):
             sem_occupancy = F.interpolate(sem_occupancy, size=(self.bev_h, self.bev_w, self.future_pred_head.num_pred_height), mode='nearest')
             ref_sem_occupancy = sem_occupancy[:, 0]
             # 这里是输出当前帧的预测轨迹，如果添加reward模型，那么应该是输出多个轨迹，然后使最优的轨迹输出最大
-            ref_bev, ref_pose_pred, ref_pose_loss = self.obtain_ref_bev_with_plan(img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj)
+            ref_bev, ref_pose_pred, ref_pose_loss, im_reward_loss, sim_reward_loss = self.obtain_ref_bev_with_plan(img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj)
         else:
             ref_bev = self.obtain_ref_bev(img, img_metas, prev_bev)
             sem_occupancy, ref_pose_pred, ref_pose_loss = None, None, None
@@ -715,6 +719,7 @@ class Drive_OccWorld(BEVFormer):
             plan_dict = {'sem_occupancy': sem_occupancy, 'sample_traj': sample_traj, 'gt_traj': sdc_planning, 'ref_pose_pred': ref_pose_pred}
 
             # D5. predict future occ in auto-regressive manner
+            # next_pose_preds bs,num_traj,2
             next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict, 
                                                                             valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='occ')
 
@@ -800,7 +805,7 @@ class Drive_OccWorld(BEVFormer):
             ref_sample_traj = sample_traj[:, :, 0]
             ref_command = command[:, 0]
             ref_sem_occupancy = None
-            ref_bev, ref_pose_pred, _ = self.obtain_ref_bev_with_plan(img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command)
+            ref_bev, ref_pose_pred, _, _, _ = self.obtain_ref_bev_with_plan(img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command)
         else:
             ref_bev = self.obtain_ref_bev(img, img_metas, prev_bev)
             ref_pose_pred = None

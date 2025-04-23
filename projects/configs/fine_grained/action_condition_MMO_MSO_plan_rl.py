@@ -97,6 +97,7 @@ pred_height = 16
 use_reward_model = True   # 使用奖励模型
 output_multi_traj = True  # 输出多条轨迹
 sample_traj_nums = 20     # 采样轨迹数
+use_sim_reward = True
 
 model = dict(
     type='Drive_OccWorld',
@@ -330,6 +331,7 @@ model = dict(
         bev_w=bev_w_,
         output_multi_traj=output_multi_traj,
         sample_traj_nums=sample_traj_nums,
+        use_sim_reward=use_sim_reward,
         transformer=dict(
             type='PlanTransformer',
             embed_dims=_dim_,

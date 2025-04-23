@@ -305,10 +305,35 @@ class PlanHead_v1(BaseModule):
 
         sm_cost_fo = self.cost_function(cost_volume, trajs[:,:,:2], instance_occupancy, drivable_area)
 
-        L = F.relu(gt_cost_fo - sm_cost_fo)
+        L = F.relu(gt_cost_fo - sm_cost_fo)  # 为什么这里用relu?
 
         return torch.mean(L)
 
+    def cal_sim_reward(self, trajs, gt_trajs, cost_volume, instance_occupancy, drivable_area):
+        '''
+        这个是为了计算sim reward的
+        trajs: torch.Tensor (B, N, 3)
+        gt_trajs: torch.Tensor (B, 3)
+        cost_volume: torch.Tensor (B, 200, 200)
+        instance_occupancy: torch.Tensor(B, 200, 200)
+        drivable_area: torch.Tensor(B, 200, 200)
+        '''
+        if gt_trajs.ndim == 2:
+            gt_trajs = gt_trajs[:, None]
+
+        # gt_cost_fo = self.cost_function.forward_sim(gt_trajs[:,:,:2], instance_occupancy, drivable_area)
+
+        cost = self.cost_function.forward_sim(trajs[:,:,:2], instance_occupancy, drivable_area)
+
+        pos_mask = cost <= 0
+        neg_mask = cost > 0
+        
+        cost[pos_mask] = 1
+        cost[neg_mask] = 0
+
+        # 0 is good
+        return cost
+    
     def select(self, trajs, cost_volume, instance_occupancy, drivable_area, k=1):
         '''
         trajs: torch.Tensor (B, N, 3)
@@ -327,7 +352,7 @@ class PlanHead_v1(BaseModule):
         return select_traj
 
     @auto_fp16(apply_to=('bev_feats'))
-    def forward(self, bev_feats, trajs, sem_occupancy, command, gt_trajs=None):
+    def forward(self, bev_feats, trajs, sem_occupancy, command, gt_trajs=None, multi_traj=False):
         """ Forward function for each frame.
 
         Args:
@@ -376,11 +401,12 @@ class PlanHead_v1(BaseModule):
         else:
             loss = None
 
-        if self.output_multi_traj:
+        if self.output_multi_traj and multi_traj:
             # select_traj
-            select_traj = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area, self.sample_traj_nums)  # B,3
+            select_traj_ = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area, self.sample_traj_nums)  # B,3
+
             # select_traj -> encoder
-            select_traj = self.pose_encoder(select_traj.float()).unsqueeze(1)   # B,1,C
+            select_traj = self.pose_encoder(select_traj_.float()).unsqueeze(1)   # B,1,C
 
             # bev refine
             bs = bev_feats.shape[0]
@@ -417,7 +443,13 @@ class PlanHead_v1(BaseModule):
             # 6. plan regression
             bs, sample_traj_nums, C = plan_query.shape
             next_pose = self.reg_branch(plan_query).view((-1, self.planning_steps, 2))   # B*traj_nums,mode=1,2
-            return next_pose, loss
+
+            # 计算sim_rewards
+            sim_rewards = None
+            if self.use_sim_reward and self.training:
+                sim_rewards = self.cal_sim_reward(select_traj_, gt_trajs, costvolume, instance_occupancy, drivable_area)
+
+            return next_pose, loss, select_traj_, sim_rewards
         else:
             # select_traj
             select_traj = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area)  # B,3

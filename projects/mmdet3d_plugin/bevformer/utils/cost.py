@@ -66,7 +66,25 @@ class Cost_Function(nn.Module):
         # cost_fc = progresscost
 
         return cost_fo
+    
 
+    def forward_sim(self, trajs, instance_occupancy, drivable_area):
+        '''
+        trajs: torch.Tensor (B, N, 2)
+        instance_occupancy: torch.Tensor(B, 200, 200)   instance_occupied=1
+        drivable_area: torch.Tensor(B, 200, 200)        driveable_surface=1
+        '''
+        safetycost = torch.clamp(self.safetycost(trajs, instance_occupancy), 0, 100)                 # penalize overlap with instance_occupancy
+        headwaycost = torch.clamp(self.headwaycost(trajs, instance_occupancy, drivable_area), 0, 100)# penalize overlap with front instance (10m)
+        # lrdividercost = torch.clamp(self.lrdividercost(trajs, lane_divider), 0, 100)               # penalize distance with lane
+        # comfortcost = torch.clamp(self.comfortcost(trajs), 0, 100)                                   # penalize high accelerations (lateral, longitudinal, jerk)
+        # progresscost = torch.clamp(self.progresscost(trajs), -100, 100)                              # L2 loss
+        rulecost = torch.clamp(self.rulecost(trajs, drivable_area), 0, 100)                          # penalize overlap with out of drivable_area
+
+        cost_fo = safetycost + headwaycost + rulecost
+        # cost_fc = progresscost
+
+        return cost_fo
 
 
 class BaseCost(nn.Module):

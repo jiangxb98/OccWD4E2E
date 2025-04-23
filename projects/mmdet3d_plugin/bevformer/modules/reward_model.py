@@ -10,7 +10,8 @@ class RewardConvNet(nn.Module):
                  hidden_dim: int = 256,
                  fut_traj_num: int = 3,
                  bev_h: int = 200,
-                 bev_w: int = 200,):
+                 bev_w: int = 200,
+                 sim_reward_nums: int = 0):
         """
         Initialize RewardConvNet.
 
@@ -24,6 +25,7 @@ class RewardConvNet(nn.Module):
         self.bev_h = bev_h
         self.bev_w = bev_w
         self.fut_traj_num = fut_traj_num
+        self.sim_reward_nums = sim_reward_nums
 
         # 合并所有卷积层到一个Sequential中
         self.conv_reward_net = nn.Sequential(
@@ -68,6 +70,16 @@ class RewardConvNet(nn.Module):
             nn.Linear(128, 1),
         )
 
+        # for sim reward
+        self.sim_reward_heads = None
+        if self.sim_reward_nums > 0:
+            self.sim_reward_heads = nn.ModuleList([
+                nn.Sequential(
+                    nn.Linear(hidden_dim, 128),
+                    nn.ReLU(),
+                    nn.Linear(128, 1),
+                ) for _ in range(self.sim_reward_nums)
+            ])
 
     def forward_multi(self, fut_bev_feature, traj) -> torch.Tensor:
         """
@@ -96,7 +108,8 @@ class RewardConvNet(nn.Module):
         x = self.reward_head(x)
         return reward_feats, x
 
-
+    def forward_reward_feat(self, fut_bev_feature, traj):
+        pass
 
     def forward_single(self, fut_bev_feature, traj) -> torch.Tensor:
         """
@@ -127,14 +140,54 @@ class RewardConvNet(nn.Module):
         # select the max reward
         multi_traj_scores = x.reshape(bs, num_traj)
         multi_traj_scores = multi_traj_scores.softmax(dim=1)
-        max_reward_idx = multi_traj_scores.argmax(dim=1)
-        max_reward = multi_traj_scores[:, max_reward_idx]
-        traj = traj.reshape(bs, num_traj, planning_steps, 2)
-        best_traj = traj[:, max_reward_idx, :].squeeze(1)  # [bs, 1, 2]
+        # max_reward_idx = multi_traj_scores.argmax(dim=1)
+        # max_reward = multi_traj_scores[:, max_reward_idx]
+        # traj = traj.reshape(bs, num_traj, planning_steps, 2)
+        # best_traj = traj[:, max_reward_idx, :].squeeze(1)  # [bs, 1, 2]
 
         # 返回multi_traj_scores, best_traj_idx, best_traj
         # 计算损失函数的时候监督multi_traj_scores，参考WoTE的损失函数的设计
-        return multi_traj_scores, max_reward_idx, best_traj
+        return multi_traj_scores  #, max_reward_idx, best_traj
+
+    def forward_single_im_sim(self, fut_bev_feature, traj) -> torch.Tensor:
+        """
+        Forward propagation.
+
+        Args:
+            fut_bev_feature (torch.Tensor): Future BEV feature, shape [bs, bev_h*bev_w, dims]
+            traj (torch.Tensor): Trajectory, shape [batch_size*num_traj, planning_steps, 2]
+        Returns:
+            torch.Tensor: Scoring features, shape [batch_size*num_traj, 128, 1, 1]
+        """
+        # 取inter_num的最后一个时间步的BEV特征
+        bs, bev_h_w, dims = fut_bev_feature.shape
+        fut_bev_feature = fut_bev_feature.reshape(bs, self.bev_h, self.bev_w, dims)
+        fut_bev_feature = fut_bev_feature.permute(0, 3, 1, 2)
+        # 展平traj
+        num_traj, planning_steps, _ = traj.shape
+        traj_feats = traj.reshape(-1, 2)  # [bs*num_traj, 2]
+
+        reward_feats = self.conv_reward_net(fut_bev_feature)  # [bs, 256, 1, 1]
+        traj_feats = self.trajectory_single_encoder(traj_feats)  # [bs*num_traj, 256]
+
+        reward_feats = reward_feats.repeat(bs*num_traj, 1, 1, 1).squeeze(-1).squeeze(-1)
+        
+        x_cat = self.cat_encoder(torch.cat([reward_feats, traj_feats], dim=1))
+        x = self.reward_head(x_cat)
+        im_traj_scores = x.reshape(bs, num_traj)
+        im_traj_scores = im_traj_scores.softmax(dim=1)
+
+        # for sim reward
+        sim_reward_scores = []
+        for i in range(self.sim_reward_nums):
+            x_sim = self.sim_reward_heads[i](x_cat)
+            x_sim = x_sim.reshape(bs, num_traj)
+            sim_reward_scores.append(x_sim.softmax(dim=1))
+        # mean for sim reward
+        sim_traj_scores = torch.cat(sim_reward_scores, dim=0).mean(dim=0).reshape(bs, num_traj)
+
+        return im_traj_scores, sim_traj_scores
+
 
 if __name__ == "__main__":
     # reward_conv_net = RewardConvNet()
@@ -145,11 +198,19 @@ if __name__ == "__main__":
     # print(y.shape)
 
 
-    reward_conv_net = RewardConvNet()
+    # reward_conv_net = RewardConvNet()
+    # fut_bev_feature = torch.randn(1, 40000, 256)
+    # traj = torch.randn(20, 1, 2)
+    # print(fut_bev_feature.shape)
+    # print(traj.shape)
+    # y = reward_conv_net.forward_single(fut_bev_feature, traj)
+    # print(y.shape)
+
+
+    reward_conv_net = RewardConvNet(sim_reward_nums=2)
     fut_bev_feature = torch.randn(1, 40000, 256)
-    traj = torch.randn(1, 20, 2)
-    print(fut_bev_feature.shape)
-    print(traj.shape)
-    y = reward_conv_net.forward_single(fut_bev_feature, traj)
+    traj = torch.randn(20, 1, 2)
+    y = reward_conv_net.forward_single_w_sim(fut_bev_feature, traj)
     print(y.shape)
+
 
