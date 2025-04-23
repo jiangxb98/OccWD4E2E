@@ -355,7 +355,7 @@ class Drive_OccWorld(BEVFormer):
                 im_reward_loss, max_reward_idx = compute_im_reward_loss(ref_real_traj, im_traj_rewards, multi_traj)
                 # 2. sim_loss, 根据世界模型的输出，计算sim_loss
                 if sim_rewards is not None:
-                    sim_reward_loss, _ = compute_sim_reward_loss(sim_rewards, sim_traj_rewards)
+                    sim_reward_loss = compute_sim_reward_loss(sim_rewards, sim_traj_rewards)
                 else:
                     sim_reward_loss = None
                 # ref_pose_pred = best_traj

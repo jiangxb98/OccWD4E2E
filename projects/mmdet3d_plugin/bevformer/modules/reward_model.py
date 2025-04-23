@@ -182,7 +182,7 @@ class RewardConvNet(nn.Module):
         for i in range(self.sim_reward_nums):
             x_sim = self.sim_reward_heads[i](x_cat)
             x_sim = x_sim.reshape(bs, num_traj)
-            sim_reward_scores.append(x_sim.softmax(dim=1))
+            sim_reward_scores.append(x_sim)
         # mean for sim reward
         sim_traj_scores = torch.cat(sim_reward_scores, dim=0).mean(dim=0).reshape(bs, num_traj)
 

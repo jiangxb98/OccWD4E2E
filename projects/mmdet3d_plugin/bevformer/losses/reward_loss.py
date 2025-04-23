@@ -52,7 +52,10 @@ def compute_sim_reward_loss(
     epsilon = 1e-6
     # Load precomputed target rewards
     batch_size = sim_reward.shape[0]
-    target_rewards = sim_reward[:, -1] # the last frame
+    if sim_reward.dim() == 3:
+        target_rewards = sim_reward[:, -1] # the last frame
+    else:
+        target_rewards = sim_reward
 
     # Compute loss using binary cross-entropy # 5 is the number of metrics
     sim_reward_loss = -torch.mean(
