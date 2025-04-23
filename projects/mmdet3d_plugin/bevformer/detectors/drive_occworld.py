@@ -329,7 +329,32 @@ class Drive_OccWorld(BEVFormer):
         # ref_bev: bs, bev_h * bev_w, c
         ref_bev = self.pts_bbox_head(img_feats, img_metas, prev_bev, only_bev=True)  # get the input
         return ref_bev
-    
+
+    def plan_with_reward(self, bev, sample_traj, sem_occupancy, command, real_traj, multi_traj):
+        pose_pred, pose_loss, multi_traj, sim_rewards = self.plan_head(bev, sample_traj, sem_occupancy, command, real_traj, multi_traj)
+        im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(bev, pose_pred)
+        sim_traj_rewards = sim_traj_rewards.sigmoid()
+
+        if self.training:
+            # 1. im_loss gt的loss
+            im_reward_loss, max_reward_idx = compute_im_reward_loss(real_traj, im_traj_rewards, multi_traj)
+            # 2. sim_loss, 根据世界模型的输出，计算sim_loss
+            if sim_rewards is not None:
+                sim_reward_loss = compute_sim_reward_loss(sim_rewards, sim_traj_rewards)
+            else:
+                sim_reward_loss = None
+            
+            pose_pred = pose_pred[max_reward_idx]  # [bs, 1, 2]
+        else:
+            # max the im_traj_rewards + sim_traj_rewards
+            all_rewards = im_traj_rewards + sim_traj_rewards
+            max_reward_idx = all_rewards.argmax()
+            pose_pred = pose_pred[max_reward_idx]  # [bs, 1, 2]
+            im_reward_loss = None
+            sim_reward_loss = None
+
+        return pose_pred, pose_loss, im_reward_loss, sim_reward_loss
+
     def obtain_ref_bev_with_plan(self, img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj=None):
         # Extract current BEV features.
         # C1. Forward.
@@ -349,18 +374,19 @@ class Drive_OccWorld(BEVFormer):
                 ref_sem_occupancy = ref_sem_occupancy.view(bs, self.bev_w, self.bev_h, d).transpose(1,2)
             
             if self.use_reward_model:
-                ref_pose_pred, ref_pose_loss, multi_traj, sim_rewards = self.plan_head(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj, True)
-                im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(ref_bev, ref_pose_pred)
-                sim_traj_rewards = sim_traj_rewards.sigmoid()
-                # 1. im_loss gt的loss
-                im_reward_loss, max_reward_idx = compute_im_reward_loss(ref_real_traj, im_traj_rewards, multi_traj)
-                # 2. sim_loss, 根据世界模型的输出，计算sim_loss
-                if sim_rewards is not None:
-                    sim_reward_loss = compute_sim_reward_loss(sim_rewards, sim_traj_rewards)
-                else:
-                    sim_reward_loss = None
-                # ref_pose_pred = best_traj
-                ref_pose_pred = ref_pose_pred[:, max_reward_idx, :].squeeze(1)  # [bs, 1, 2]
+                ref_pose_pred, ref_pose_loss, im_reward_loss, sim_reward_loss = self.plan_with_reward(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj, True)
+                # ref_pose_pred, ref_pose_loss, multi_traj, sim_rewards = self.plan_head(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj, True)
+                # im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(ref_bev, ref_pose_pred)
+                # sim_traj_rewards = sim_traj_rewards.sigmoid()
+                # # 1. im_loss gt的loss
+                # im_reward_loss, max_reward_idx = compute_im_reward_loss(ref_real_traj, im_traj_rewards, multi_traj)
+                # # 2. sim_loss, 根据世界模型的输出，计算sim_loss
+                # if sim_rewards is not None:
+                #     sim_reward_loss = compute_sim_reward_loss(sim_rewards, sim_traj_rewards)
+                # else:
+                #     sim_reward_loss = None
+                # # ref_pose_pred = best_traj
+                # ref_pose_pred = ref_pose_pred[max_reward_idx]  # [bs, 1, 2]
             else:
                 ref_pose_pred, ref_pose_loss = self.plan_head(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj)
                 im_reward_loss = None
@@ -389,7 +415,11 @@ class Drive_OccWorld(BEVFormer):
 
         next_bev_feats, next_bev_sem, next_pose_loss = [ref_bev], [], []
         next_pose_preds = plan_dict['ref_pose_pred'] # B,Lout,2
-
+        next_sim_rewards, next_im_rewards = [], []
+        if self.training:
+            reward_model_frame_idx = [self.future_pred_frame_num]
+        else:
+            reward_model_frame_idx = range(1, self.future_pred_frame_num + 1)
 
         # D2. Align previous frames to the reference coordinates.
         ref_img_metas = [[each[num_frames-1]] for each in prev_img_metas]
@@ -448,14 +478,21 @@ class Drive_OccWorld(BEVFormer):
                         sem_occupancy_i = sem_occupancy_i.view(bs, self.bev_w, self.bev_h, d).transpose(1,2)
                     else:   # use_gt  traning_epoch < 12
                         sem_occupancy_i = plan_dict['sem_occupancy'][:,future_frame_index]
-                    pose_pred, pose_loss = self.plan_head(pred_feat[-1], sample_traj_i, sem_occupancy_i, command_i, gt_traj_i)
+                    # pose_pred, pose_loss = self.plan_head(pred_feat[-1], sample_traj_i, sem_occupancy_i, command_i, gt_traj_i)
                     
-                    if self.use_reward_model:
-                        pass
+                    if self.use_reward_model and future_frame_index in reward_model_frame_idx:
+                        pose_pred, pose_loss, im_reward_loss, sim_reward_loss = self.plan_with_reward(pred_feat[-1], sample_traj_i, sem_occupancy_i, command_i, gt_traj_i, True)
+                    else:
+                        pose_pred, pose_loss = self.plan_head(pred_feat[-1], sample_traj_i, sem_occupancy_i, command_i, gt_traj_i)
+                        im_reward_loss = None
+                        sim_reward_loss = None
                     
                     # update prev_pose and store pred
                     next_pose_preds = torch.cat([next_pose_preds, pose_pred], dim=1)
                     next_pose_loss.append(pose_loss)
+                    next_im_rewards.append(im_reward_loss) if im_reward_loss is not None else None
+                    next_sim_rewards.append(sim_reward_loss) if sim_reward_loss is not None else None
+
                 elif 'v2' in self.plan_head_type:   # used for inflated_GMO when sem_occupancy does not distinguish categories in GMO
                     pose_pred = self.plan_head(pred_feat[-1], command_i)
                     next_pose_preds = torch.cat([next_pose_preds, pose_pred], dim=1)
@@ -477,7 +514,7 @@ class Drive_OccWorld(BEVFormer):
         # forward head
         next_bev_preds = future_pred_head.forward_head(next_bev_feats)
 
-        return next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss
+        return next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss, next_im_rewards, next_sim_rewards
 
 
     def compute_occ_loss(self, occ_preds, occ_gts):
@@ -721,13 +758,13 @@ class Drive_OccWorld(BEVFormer):
 
             # D5. predict future occ in auto-regressive manner
             # next_pose_preds bs,num_traj,2
-            next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict, 
+            next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss, next_im_rewards, next_sim_rewards = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict, 
                                                                             valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='occ')
 
 
             # D6. predict future flow in auto-regressive manner
             if self.turn_on_flow:
-                next_bev_preds_flow, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict, 
+                next_bev_preds_flow, _, _, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict, 
                                                                 valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='flow')
 
 
@@ -825,12 +862,12 @@ class Drive_OccWorld(BEVFormer):
         plan_dict = {'sem_occupancy': None, 'sample_traj': sample_traj, 'gt_traj': sdc_planning, 'ref_pose_pred': ref_pose_pred}
 
         # D5. predict future occ in auto-regressive manner
-        next_bev_preds, _, next_pose_preds, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict,
+        next_bev_preds, _, next_pose_preds, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict,
                                                                 valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='occ')
 
         # D6. predict future flow in auto-regressive manner
         if self.turn_on_flow:
-            next_bev_preds_flow, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict,
+            next_bev_preds_flow, _, _, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict,
                                                             valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='flow')
 
 
