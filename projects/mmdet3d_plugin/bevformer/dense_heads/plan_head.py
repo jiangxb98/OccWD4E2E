@@ -404,8 +404,10 @@ class PlanHead_v1(BaseModule):
             loss = None
 
         if self.output_multi_traj and multi_traj:
-            # select_traj
+            # 1. select_traj
             select_traj_ = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area, self.sample_traj_nums)  # B,3
+            # other 2. random select traj_nums from cur_trajs
+            select_traj_ = cur_trajs[torch.randperm(cur_trajs.shape[0])[:self.sample_traj_nums]]
 
             # select_traj -> encoder
             select_traj = self.pose_encoder(select_traj_.float()).unsqueeze(1)   # B,1,C
