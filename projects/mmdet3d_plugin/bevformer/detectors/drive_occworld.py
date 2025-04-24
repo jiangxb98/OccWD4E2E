@@ -808,7 +808,7 @@ class Drive_OccWorld(BEVFormer):
         # E5. Compute loss for reward model
         if self.use_reward_model:
             losses_reward = sum(next_im_rewards)/len(next_im_rewards) + sum(next_sim_rewards)/len(next_sim_rewards)
-            losses.update(losses_reward=losses_reward)
+            losses.update(losses_reward=losses_reward * 0.1)
 
         return losses
 

@@ -5,7 +5,7 @@ _base_ = [
 plugin = True
 plugin_dir = 'projects/mmdet3d_plugin/'
 occ_path = "./data/nuScenes-Occupancy"
-use_fine_occ = True
+use_fine_occ = False
 
 # If point cloud range is changed, the models should also change their point
 # cloud range accordingly
@@ -35,12 +35,12 @@ frame_loss_weight = [
     [1],  # for frame 1.  ref_frame+1
     [0]  # ignore.
 ]
-only_generate_dataset = False # only generate cam4docc dataset, no forward
+only_generate_dataset = True # only generate cam4docc dataset, no forward
 supervise_all_future = True  # select which future to predict occ (defalut=True, all future generate occ)
 load_frame_interval = None  # use 1/8 nuscenes dataset for faster evaluation.
 
-turn_on_flow = False         # turn_on_flow=True: load flow_label and predict flow througn flow_branch
-turn_on_plan = True
+turn_on_flow = True         # turn_on_flow=True: load flow_label and predict flow througn flow_branch
+turn_on_plan = False
 
 # World model.
 world_head_pred_history_frame_num = 0
@@ -59,16 +59,13 @@ ida_aug_conf = {
 img_norm_cfg = dict(
     mean=[103.530, 116.280, 123.675], std=[1.0, 1.0, 1.0], to_rgb=False)
 # For nuScenes we usually do 10-class detection
-use_separate_classes = True
-use_background_classes = True
+use_separate_classes = False
 class_names = [
-    'barrier', 'bicycle', 'bus', 'car', 'construction', 
-    'motorcycle', 'pedestrian', 'trafficcone', 'trailer',
-    'truck', 'driveable_surface', 'other', 'sidewalk',
-    'terrain', 'mannade', 'vegetation',
+    'car', 'truck', 'construction', 'bus', 'trailer',
+    'motorcycle', 'bicycle', 'pedestrian',
 ]
 empty_idx = 0
-num_cls = len(class_names) + 1
+num_cls = 2
 
 input_modality = dict(
     use_lidar=False,
@@ -168,7 +165,7 @@ model = dict(
             type='ConditionalNorm',
             occ_flow='occ',
             embed_dims=_dim_, 
-            sem_norm=True,
+            sem_norm=False,
             sem_gt_train=False,
             ego_motion_ln=True,
             obj_motion_ln=False,
@@ -299,50 +296,6 @@ model = dict(
             loss_weight=2.0),
         loss_bbox=dict(type='L1Loss', loss_weight=0.25),
         loss_iou=dict(type='GIoULoss', loss_weight=0.0)),
-    plan_head=dict(
-        type='PlanHead_v1',
-        with_adapter=True,
-        plan_grid_conf=plan_grid_conf,
-        bev_h=bev_h_,
-        bev_w=bev_w_,
-        transformer=dict(
-            type='PlanTransformer',
-            embed_dims=_dim_,
-            decoder=dict(
-                type='PlanDecoder',
-                num_layers=1,
-                return_intermediate=False,
-                transformerlayers=dict(
-                    type='PlanTransformerLayer',
-                    attn_cfgs=[
-                        # layer-1: temporal self-attention.
-                        dict(
-                            type='GroupMultiheadAttention',
-                            embed_dims=_dim_,
-                            num_heads=8,
-                            dropout=0.1,),
-                        # layer-2: spatial cross-attention,
-                        dict(
-                            type='GroupMultiheadAttention',
-                            embed_dims=_dim_,
-                            num_heads=8,
-                            dropout=0.1,),
-                    ],
-                    feedforward_channels=_ffn_dim_,
-                    ffn_dropout=0.1,
-                    operation_order=('self_attn', 'norm', 'cross_attn', 'norm', 'ffn', 'norm'))
-            )),
-        positional_encoding=dict(
-            type='LearnedPositionalEncoding',
-            num_feats=_pos_dim_,
-            row_num_embed=bev_h_,
-            col_num_embed=bev_w_,
-        ),
-        loss_planning=dict(type='PlanningLoss'),
-        loss_collision=[dict(type='CollisionLoss', delta=0.0, weight=2.5),
-                        dict(type='CollisionLoss', delta=0.5, weight=1.0),
-                        dict(type='CollisionLoss', delta=1.0, weight=0.25)],
-    ),    
     # model training and testing settings
     train_cfg=dict(pts=dict(
         grid_size=[512, 512, 1],
@@ -372,11 +325,11 @@ train_pipeline = [
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
     dict(type='PadMultiViewImage', size_divisor=32),
 
-    dict(type='LoadOccupancy', to_float32=True, occ_path=occ_path, grid_size=occ_size, unoccupied=empty_idx, pc_range=point_cloud_range, use_fine_occ=use_fine_occ, 
-         use_separate_classes=use_separate_classes, use_background_classes=use_background_classes, time_history_field=queue_length, time_future_field=future_pred_frame_num_train, test_mode=False),
+    dict(type='LoadInstanceWithFlow', cam4docc_dataset_path=cam4docc_dataset_path, grid_size=occ_size, use_flow=True, background=empty_idx, pc_range=point_cloud_range,
+         use_separate_classes=use_separate_classes, time_history_field=queue_length, time_future_field=future_pred_frame_num_train),
 
     dict(type='DefaultFormatBundle3D', class_names=class_names),
-    dict(type='CustomCollect3D', keys=['img', 'aug_param', 'gt_occ', 'vel_steering',
+    dict(type='CustomCollect3D', keys=['img', 'aug_param', 'segmentation', 'flow', 'vel_steering',
                                        'sdc_planning', 'sdc_planning_mask', 'command', 'sample_traj', 'gt_future_boxes'])
 ]
 
@@ -384,10 +337,10 @@ test_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
     dict(type='PadMultiViewImage', size_divisor=32),
-    dict(type='LoadOccupancy', to_float32=True, occ_path=occ_path, grid_size=occ_size, unoccupied=empty_idx, pc_range=point_cloud_range, use_fine_occ=use_fine_occ, 
-         use_separate_classes=use_separate_classes, use_background_classes=use_background_classes, time_history_field=queue_length, time_future_field=future_pred_frame_num_train, test_mode=True),
+    dict(type='LoadInstanceWithFlow', cam4docc_dataset_path=cam4docc_dataset_path, grid_size=occ_size, use_flow=True, background=empty_idx, pc_range=point_cloud_range,
+         use_separate_classes=use_separate_classes, time_history_field=queue_length, time_future_field=future_pred_frame_num_test),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
-    dict(type='CustomCollect3D', keys=['img', 'gt_occ', 'vel_steering',
+    dict(type='CustomCollect3D', keys=['img', 'segmentation', 'instance', 'vel_steering',
                                        'sdc_planning', 'sdc_planning_mask', 'command', 'sample_traj', 'segmentation_bev'])
 ]
 

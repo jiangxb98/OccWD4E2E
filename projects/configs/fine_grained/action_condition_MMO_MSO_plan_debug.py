@@ -20,14 +20,21 @@ plan_grid_conf = {
     'zbound': [-10.0, 10.0, 20.0],
 }
 
+# for debug
+plan_grid_conf = {
+    'xbound': [-50.0, 50.0, 1.0],
+    'ybound': [-50.0, 50.0, 1.0],
+    'zbound': [-10.0, 10.0, 20.0],
+}
+
 # Dataloader.
-queue_length = 2 # history frame num input
+queue_length = 1 # history frame num input
 memory_queue_len = 1 # memory queue
 
-future_queue_length_train = 4 # future frame num input
-future_pred_frame_num_train = 4 # future frame num pred training
-future_queue_length_test = 4   # future frame num input
-future_pred_frame_num_test = 4 # future frame num pred testing
+future_queue_length_train = 2 # future frame num input
+future_pred_frame_num_train = 2 # future frame num pred training
+future_queue_length_test = 2   # future frame num input
+future_pred_frame_num_test = 2 # future frame num pred testing
 
 future_decoder_layer_num = 3
 frame_loss_weight = [
@@ -81,8 +88,8 @@ _dim_ = 256
 _pos_dim_ = _dim_//2
 _ffn_dim_ = _dim_*2
 _num_levels_ = 4
-bev_h_ = 200
-bev_w_ = 200
+bev_h_ = 100
+bev_w_ = 100
 pred_height = 16
 
 model = dict(
