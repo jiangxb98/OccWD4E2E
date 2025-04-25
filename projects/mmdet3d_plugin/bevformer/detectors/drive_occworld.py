@@ -167,8 +167,10 @@ class Drive_OccWorld(BEVFormer):
 
     def freeze_model(self, model_name_list):
         for name, param in self.named_parameters():
-            if name in model_name_list:
-                param.requires_grad = False
+            for model_name in model_name_list:
+                if model_name in name:
+                    param.requires_grad = False
+                    break
 
     def set_epoch(self, epoch):
         self.training_epoch = epoch
