@@ -174,7 +174,7 @@ class PlanHead_v1(BaseModule):
                  loss_collision=None,
 
                  output_multi_traj=False,
-                 sample_traj_nums=20,
+                 sample_traj_nums=1,
                  use_sim_reward=False,
                  *args,
                  **kwargs):
@@ -255,7 +255,7 @@ class PlanHead_v1(BaseModule):
     def _init_layers(self):
         """Initialize BEV prediction head."""
         # plan query for the next frame.
-        self.plan_embedding = nn.Embedding(1, self.embed_dims)
+        self.plan_embedding = nn.Embedding(self.sample_traj_nums, self.embed_dims)
         # navi embed.
         self.navi_embedding = nn.Embedding(3, self.embed_dims)
         # mlp_fuser
@@ -410,7 +410,8 @@ class PlanHead_v1(BaseModule):
             # select_traj_ = cur_trajs[torch.randperm(cur_trajs.shape[1])[:, :self.sample_traj_nums]]
 
             # select_traj -> encoder
-            select_traj = self.pose_encoder(select_traj_.float()).unsqueeze(1)   # B,1,C
+            select_traj = self.pose_encoder(select_traj_.float())   # B,1,C
+            select_traj = select_traj.permute(1, 0, 2)
 
             # bev refine
             bs = bev_feats.shape[0]
@@ -419,10 +420,10 @@ class PlanHead_v1(BaseModule):
 
             # # 1. plan_query
             plan_query = self.plan_embedding.weight.to(dtype)
-            plan_query = plan_query[None]   
+            plan_query = plan_query[None]
             # navi_embed
             navi_embed = self.navi_embedding.weight[command]
-            navi_embed = navi_embed[None]
+            navi_embed = navi_embed[None].repeat(self.sample_traj_nums, 1, 1)
             # mlp_fuser
             plan_query = torch.cat([plan_query, navi_embed], dim=-1)
             plan_query = self.mlp_fuser(plan_query)
@@ -433,17 +434,25 @@ class PlanHead_v1(BaseModule):
             bev_pos = self.positional_encoding(bev_mask).to(dtype)  # bs, bev_dims, bev_h, bev_w
 
             # 5. do transformer layers to get pose features.
-            plan_query_list = []
-            for j in range(self.sample_traj_nums):
-                plan_query_ = self.transformer(
-                    plan_query,
-                    bev_feats,
-                    prev_pose=select_traj[:,:,j],
-                    bev_pos=bev_pos,
-                )
-                plan_query_list.append(plan_query_)
-            plan_query = torch.cat(plan_query_list, dim=1)  # bs, traj_nums, C
-            
+            plan_query = self.transformer(
+                plan_query,
+                bev_feats.expand(self.sample_traj_nums, *bev_feats.shape[1:]),
+                prev_pose=select_traj,
+                bev_pos=bev_pos.expand(self.sample_traj_nums, *bev_pos.shape[1:]),
+            )
+            plan_query = plan_query.permute(1, 0, 2)
+            # for list
+            # plan_query_list = []
+            # for j in range(self.sample_traj_nums):
+            #     plan_query_ = self.transformer(
+            #         plan_query,
+            #         bev_feats,
+            #         prev_pose=select_traj[:,:,j],
+            #         bev_pos=bev_pos.repeat(self.sample_traj_nums, 1, 1, 1),
+            #     )
+            #     plan_query_list.append(plan_query_)
+            # plan_query = torch.cat(plan_query_list, dim=1)  # bs, traj_nums, C
+
             # 6. plan regression
             bs, sample_traj_nums, C = plan_query.shape
             next_pose = self.reg_branch(plan_query).view((-1, self.planning_steps, 2))   # B*traj_nums,mode=1,2

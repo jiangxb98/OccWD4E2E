@@ -161,6 +161,7 @@ class Drive_OccWorld(BEVFormer):
             del self.future_pred_head_flow.can_bus_mlp
             del self.future_pred_head_flow.positional_encoding
         
+        self.freeze_model_name = freeze_model_name
         if freeze_model_name is not None:
             self.freeze_model(freeze_model_name)
 
