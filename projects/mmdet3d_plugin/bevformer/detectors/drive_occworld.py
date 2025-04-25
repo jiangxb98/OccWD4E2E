@@ -70,6 +70,7 @@ class Drive_OccWorld(BEVFormer):
 
                  use_reward_model=False,
                  reward_model=None,
+                 freeze_model_name=None,
                  *args,
                  **kwargs,):
 
@@ -159,6 +160,15 @@ class Drive_OccWorld(BEVFormer):
             del self.future_pred_head_flow.prev_frame_embedding
             del self.future_pred_head_flow.can_bus_mlp
             del self.future_pred_head_flow.positional_encoding
+        
+        if freeze_model_name is not None:
+            self.freeze_model(freeze_model_name)
+
+
+    def freeze_model(self, model_name_list):
+        for name, param in self.named_parameters():
+            if name in model_name_list:
+                param.requires_grad = False
 
     def set_epoch(self, epoch):
         self.training_epoch = epoch
@@ -736,7 +746,8 @@ class Drive_OccWorld(BEVFormer):
         else:
             ref_bev = self.obtain_ref_bev(img, img_metas, prev_bev)
             sem_occupancy, ref_pose_pred, ref_pose_loss = None, None, None
-
+            im_reward_loss = None
+            sim_reward_loss = None
 
         # D. Extract future BEV features.
         valid_frames = [0]
@@ -764,6 +775,7 @@ class Drive_OccWorld(BEVFormer):
 
             # D5. predict future occ in auto-regressive manner
             # next_pose_preds bs,num_traj,2
+            # action condition注意：轨迹点是当前帧的轨迹点，command是预测的下一帧的command，也就是未来bev特征是当前的轨迹点和下一帧要做的command(前行，左，右)
             next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss, next_im_rewards, next_sim_rewards = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict, 
                                                                             valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='occ')
 
