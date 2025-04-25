@@ -420,7 +420,10 @@ class PlanHead_v1(BaseModule):
 
             # # 1. plan_query
             plan_query = self.plan_embedding.weight.to(dtype)
-            plan_query = plan_query[None]
+            if plan_query.shape[0] == self.sample_traj_nums:
+                plan_query = plan_query[:, None]
+            else:
+                plan_query = plan_query[None].repeat(self.sample_traj_nums, 1, 1)
             # navi_embed
             navi_embed = self.navi_embedding.weight[command]
             navi_embed = navi_embed[None].repeat(self.sample_traj_nums, 1, 1)
@@ -460,7 +463,7 @@ class PlanHead_v1(BaseModule):
             # 计算sim_rewards
             sim_rewards = None
             if self.use_sim_reward and self.training:
-                sim_rewards = self.cal_sim_reward(select_traj_, gt_trajs, costvolume, instance_occupancy, drivable_area)
+                sim_rewards = self.cal_sim_reward(select_traj_, gt_trajs, None, instance_occupancy, drivable_area)
 
             return next_pose, loss, select_traj_.to(torch.float32), sim_rewards
         else:
@@ -474,9 +477,12 @@ class PlanHead_v1(BaseModule):
             dtype = bev_feats.dtype
             bev_feats = rearrange(bev_feats, 'b c h w -> b (w h) c')
 
-            # # 1. plan_query
+            # 1. plan_query
             plan_query = self.plan_embedding.weight.to(dtype)
-            plan_query = plan_query[None]   
+            plan_query = plan_query[None]
+            # 当使用多个plan_query时，取平均
+            if plan_query.shape[1] == self.sample_traj_nums:
+                plan_query = plan_query.mean(1)[:, None]
             # navi_embed
             navi_embed = self.navi_embedding.weight[command]
             navi_embed = navi_embed[None]
