@@ -176,6 +176,7 @@ class PlanHead_v1(BaseModule):
                  output_multi_traj=False,
                  sample_traj_nums=1,
                  use_sim_reward=False,
+                 plan_query_mode='first',  # 'mean', 'max', 'min', 'first'
                  *args,
                  **kwargs):
 
@@ -185,6 +186,7 @@ class PlanHead_v1(BaseModule):
         self.output_multi_traj = output_multi_traj
         self.sample_traj_nums = sample_traj_nums
         self.use_sim_reward = use_sim_reward
+        self.plan_query_mode = plan_query_mode
         # cls
         self.instance_cls = torch.tensor(instance_cls, requires_grad=False)  # 'bicycle', 'bus', 'car', 'construction', 'motorcycle', 'pedestrian', 'trailer', 'truck'
         self.drivable_area_cls = torch.tensor(drivable_area_cls, requires_grad=False)  # 'drivable_area'
@@ -481,8 +483,16 @@ class PlanHead_v1(BaseModule):
             plan_query = self.plan_embedding.weight.to(dtype)
             plan_query = plan_query[None]
             # 当使用多个plan_query时，取平均
-            if plan_query.shape[1] == self.sample_traj_nums:
-                plan_query = plan_query.mean(1)[:, None]
+            if plan_query.shape[1] > 0:
+                if self.plan_query_mode == 'first':
+                    plan_query = plan_query[:, 0, :][:, None]
+                elif self.plan_query_mode == 'mean':
+                    plan_query = plan_query.mean(1)[:, None]
+                elif self.plan_query_mode == 'max':
+                    plan_query = plan_query.max(1)[:, None]
+                elif self.plan_query_mode == 'min':
+                    plan_query = plan_query.min(1)[:, None]
+            
             # navi_embed
             navi_embed = self.navi_embedding.weight[command]
             navi_embed = navi_embed[None]

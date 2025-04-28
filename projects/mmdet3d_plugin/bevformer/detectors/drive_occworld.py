@@ -368,7 +368,7 @@ class Drive_OccWorld(BEVFormer):
 
         return pose_pred, pose_loss, im_reward_loss, sim_reward_loss
 
-    def obtain_ref_bev_with_plan(self, img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj=None):
+    def obtain_ref_bev_with_plan(self, img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj=None, is_multi_traj=False):
         # Extract current BEV features.
         # C1. Forward.
         img_feats = self.extract_feat(img=img, img_metas=img_metas)
@@ -386,8 +386,8 @@ class Drive_OccWorld(BEVFormer):
                 bs, hw, d = ref_sem_occupancy.shape
                 ref_sem_occupancy = ref_sem_occupancy.view(bs, self.bev_w, self.bev_h, d).transpose(1,2)
             
-            if self.use_reward_model:
-                ref_pose_pred, ref_pose_loss, im_reward_loss, sim_reward_loss = self.plan_with_reward(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj, True)
+            if self.use_reward_model and is_multi_traj:
+                ref_pose_pred, ref_pose_loss, im_reward_loss, sim_reward_loss = self.plan_with_reward(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj, is_multi_traj)
                 # ref_pose_pred, ref_pose_loss, multi_traj, sim_rewards = self.plan_head(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj, True)
                 # im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(ref_bev, ref_pose_pred)
                 # sim_traj_rewards = sim_traj_rewards.sigmoid()
