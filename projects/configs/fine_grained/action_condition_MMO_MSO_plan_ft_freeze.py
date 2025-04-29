@@ -85,15 +85,8 @@ bev_h_ = 200
 bev_w_ = 200
 pred_height = 16
 
-# for reward model
 
-use_reward_model = True   # 使用奖励模型
-output_multi_traj = True  # 输出多条轨迹
-sample_traj_nums = 20     # 采样轨迹数
-use_sim_reward = True     #
-sim_reward_nums = 1       # simulation reward head nums
-plan_query_nums = 1       # plan query nums
-plan_query_mode = 'first' # plan query mode
+freeze_model_name = ['img_backbone', 'img_neck', 'future_pred_head', 'pts_bbox_head']
 
 model = dict(
     type='Drive_OccWorld',
@@ -104,18 +97,7 @@ model = dict(
     video_test_mode=True,
     only_generate_dataset=only_generate_dataset,
     supervise_all_future=supervise_all_future,
-
-    # Reward model config
-    use_reward_model=use_reward_model,
-    reward_model=dict(
-        type='RewardConvNet',
-        bev_h=bev_h_,
-        bev_w=bev_w_,
-        hidden_dim=_dim_,
-        fut_traj_num=future_pred_frame_num_train,
-        sim_reward_nums=sim_reward_nums,
-    ),
-
+    freeze_model_name=freeze_model_name,
     # BEV configuration.
     point_cloud_range=point_cloud_range,
     bev_h=bev_h_,
@@ -326,11 +308,6 @@ model = dict(
         plan_grid_conf=plan_grid_conf,
         bev_h=bev_h_,
         bev_w=bev_w_,
-        output_multi_traj=output_multi_traj,
-        sample_traj_nums=sample_traj_nums,
-        use_sim_reward=use_sim_reward,
-        plan_query_nums=plan_query_nums,
-        plan_query_mode=plan_query_mode,
         transformer=dict(
             type='PlanTransformer',
             embed_dims=_dim_,
@@ -492,7 +469,7 @@ lr_config = dict(
     warmup_iters=500,
     warmup_ratio=1.0 / 3,
     min_lr_ratio=1e-3)
-total_epochs = 24
+total_epochs = 6
 evaluation = dict(interval=1, pipeline=test_pipeline)
 
 runner = dict(type='EpochBasedRunner', max_epochs=total_epochs)

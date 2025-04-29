@@ -93,7 +93,7 @@ sample_traj_nums = 20     # 采样轨迹数
 use_sim_reward = True     #
 sim_reward_nums = 1       # simulation reward head nums
 plan_query_nums = 1       # plan query nums
-plan_query_mode = 'first' # plan query mode
+freeze_model_name = ['img_backbone', 'img_neck', 'future_pred_head', 'pts_bbox_head']
 
 model = dict(
     type='Drive_OccWorld',
@@ -104,7 +104,7 @@ model = dict(
     video_test_mode=True,
     only_generate_dataset=only_generate_dataset,
     supervise_all_future=supervise_all_future,
-
+    freeze_model_name=freeze_model_name,
     # Reward model config
     use_reward_model=use_reward_model,
     reward_model=dict(
@@ -330,7 +330,6 @@ model = dict(
         sample_traj_nums=sample_traj_nums,
         use_sim_reward=use_sim_reward,
         plan_query_nums=plan_query_nums,
-        plan_query_mode=plan_query_mode,
         transformer=dict(
             type='PlanTransformer',
             embed_dims=_dim_,
@@ -492,7 +491,7 @@ lr_config = dict(
     warmup_iters=500,
     warmup_ratio=1.0 / 3,
     min_lr_ratio=1e-3)
-total_epochs = 24
+total_epochs = 6
 evaluation = dict(interval=1, pipeline=test_pipeline)
 
 runner = dict(type='EpochBasedRunner', max_epochs=total_epochs)

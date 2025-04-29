@@ -176,6 +176,7 @@ class PlanHead_v1(BaseModule):
                  output_multi_traj=False,
                  sample_traj_nums=1,
                  use_sim_reward=False,
+                 plan_query_nums=1,
                  plan_query_mode='first',  # 'mean', 'max', 'min', 'first'
                  *args,
                  **kwargs):
@@ -187,6 +188,7 @@ class PlanHead_v1(BaseModule):
         self.sample_traj_nums = sample_traj_nums
         self.use_sim_reward = use_sim_reward
         self.plan_query_mode = plan_query_mode
+        self.plan_query_nums = plan_query_nums
         # cls
         self.instance_cls = torch.tensor(instance_cls, requires_grad=False)  # 'bicycle', 'bus', 'car', 'construction', 'motorcycle', 'pedestrian', 'trailer', 'truck'
         self.drivable_area_cls = torch.tensor(drivable_area_cls, requires_grad=False)  # 'drivable_area'
@@ -257,7 +259,7 @@ class PlanHead_v1(BaseModule):
     def _init_layers(self):
         """Initialize BEV prediction head."""
         # plan query for the next frame.
-        self.plan_embedding = nn.Embedding(self.sample_traj_nums, self.embed_dims)
+        self.plan_embedding = nn.Embedding(self.plan_query_nums, self.embed_dims)
         # navi embed.
         self.navi_embedding = nn.Embedding(3, self.embed_dims)
         # mlp_fuser

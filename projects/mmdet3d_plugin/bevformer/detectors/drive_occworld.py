@@ -68,17 +68,22 @@ class Drive_OccWorld(BEVFormer):
                  _viz_pcd_flag=False,
                  _viz_pcd_path='dbg/pred_pcd',  # root/{prefix}
 
-                 use_reward_model=False,
+                 use_reward_model=False,  # for imitation reward
                  reward_model=None,
                  freeze_model_name=None,
+                 future_reward_model_frame_idx=None,
+                 use_sim_reward=False,  # for simulation reward
                  *args,
                  **kwargs,):
 
         super().__init__(*args, **kwargs)
 
+        # reward model
         self.use_reward_model = use_reward_model
         if use_reward_model:
             self.reward_model = builder.build_head(reward_model)
+            self.future_reward_model_frame_idx = future_reward_model_frame_idx if future_reward_model_frame_idx is not None else [future_pred_frame_num]
+            self.use_sim_reward = use_sim_reward
 
         # occ head
         self.future_pred_head = builder.build_head(future_pred_head)
@@ -344,6 +349,7 @@ class Drive_OccWorld(BEVFormer):
         return ref_bev
 
     def plan_with_reward(self, bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj):
+        # 这里需要改成可以控制只使用imitation reward或者simulation reward或者两者都使用
         pose_pred, pose_loss, multi_traj, sim_rewards = self.plan_head(bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj)
         im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(bev, pose_pred)
         sim_traj_rewards = sim_traj_rewards.sigmoid()
@@ -352,7 +358,7 @@ class Drive_OccWorld(BEVFormer):
             # 1. im_loss gt的loss
             im_reward_loss, max_reward_idx = compute_im_reward_loss(real_traj, im_traj_rewards, multi_traj)
             # 2. sim_loss, 根据世界模型的输出，计算sim_loss
-            if sim_rewards is not None:
+            if sim_rewards is not None and sim_traj_rewards is not None:
                 sim_reward_loss = compute_sim_reward_loss(sim_rewards, sim_traj_rewards)
             else:
                 sim_reward_loss = None
@@ -360,7 +366,9 @@ class Drive_OccWorld(BEVFormer):
             pose_pred = pose_pred[max_reward_idx]  # [bs, 1, 2]
         else:
             # max the im_traj_rewards + sim_traj_rewards
-            all_rewards = im_traj_rewards + sim_traj_rewards
+            all_rewards = im_traj_rewards
+            if sim_traj_rewards is not None:
+                all_rewards = all_rewards + sim_traj_rewards
             max_reward_idx = all_rewards.argmax()
             pose_pred = pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
             im_reward_loss = None
@@ -429,13 +437,16 @@ class Drive_OccWorld(BEVFormer):
         next_bev_feats, next_bev_sem, next_pose_loss = [ref_bev], [], []
         next_pose_preds = plan_dict['ref_pose_pred'] # B,Lout,2
         next_sim_rewards, next_im_rewards = [], []
-        if plan_dict['im_reward_loss'] is not None:
-            next_im_rewards.append(plan_dict['im_reward_loss'])
-        if plan_dict['sim_reward_loss'] is not None:
-            next_sim_rewards.append(plan_dict['sim_reward_loss'])
+
+        if hasattr(plan_dict, 'im_reward_loss'):
+            if plan_dict['im_reward_loss'] is not None:
+                next_im_rewards.append(plan_dict['im_reward_loss'])
+        if hasattr(plan_dict, 'sim_reward_loss'):
+            if plan_dict['sim_reward_loss'] is not None:
+                next_sim_rewards.append(plan_dict['sim_reward_loss'])
 
         if self.training:
-            reward_model_frame_idx = [self.future_pred_frame_num]
+            reward_model_frame_idx = self.future_reward_model_frame_idx
         else:
             reward_model_frame_idx = list(range(1, self.future_pred_frame_num + 1))
 
@@ -779,6 +790,7 @@ class Drive_OccWorld(BEVFormer):
             # D5. predict future occ in auto-regressive manner
             # next_pose_preds bs,num_traj,2
             # action condition注意：轨迹点是当前帧的轨迹点，command是预测的下一帧的command，也就是未来bev特征是当前的轨迹点和下一帧要做的command(前行，左，右)
+            # nuScenes 关键帧采样频率是2hz，所以每帧预测是0.5s的轨迹点
             next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss, next_im_rewards, next_sim_rewards = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict, 
                                                                             valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='occ')
 
@@ -822,7 +834,11 @@ class Drive_OccWorld(BEVFormer):
 
         # E5. Compute loss for reward model
         if self.use_reward_model:
-            losses_reward = sum(next_im_rewards)/len(next_im_rewards) + sum(next_sim_rewards)/len(next_sim_rewards)
+            # imitation reward (required)
+            losses_reward = sum(next_im_rewards) / len(next_im_rewards)
+            # simulation reward (optional)
+            if len(next_sim_rewards) > 0 and self.use_sim_reward:
+                losses_reward = losses_reward + sum(next_sim_rewards) / len(next_sim_rewards)
             losses.update(losses_reward=losses_reward * 0.1)
 
         return losses
