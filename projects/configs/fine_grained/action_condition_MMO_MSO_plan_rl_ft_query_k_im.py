@@ -85,8 +85,16 @@ bev_h_ = 200
 bev_w_ = 200
 pred_height = 16
 
+# for reward model
 
-freeze_model_name = None # ['img_backbone', 'img_neck', 'future_pred_head', 'pts_bbox_head']
+use_reward_model = True   # 使用奖励模型
+output_multi_traj = True  # 输出多条轨迹
+sample_traj_nums = 20     # 采样轨迹数
+use_sim_reward = False    # 使用simulation reward
+sim_reward_nums = 1       # simulation reward head nums
+plan_query_nums = 20       # plan query nums
+freeze_model_name = ['img_backbone', 'img_neck', 'future_pred_head', 'pts_bbox_head']
+plan_query_mode = 'mean'
 
 model = dict(
     type='Drive_OccWorld',
@@ -98,6 +106,19 @@ model = dict(
     only_generate_dataset=only_generate_dataset,
     supervise_all_future=supervise_all_future,
     freeze_model_name=freeze_model_name,
+    use_sim_reward=use_sim_reward,
+    # Reward model config
+    use_reward_model=use_reward_model,
+    reward_model=dict(
+        type='RewardConvNet',
+        bev_h=bev_h_,
+        bev_w=bev_w_,
+        hidden_dim=_dim_,
+        fut_traj_num=future_pred_frame_num_train,
+        sim_reward_nums=sim_reward_nums,
+        use_sim_reward=use_sim_reward,
+    ),
+
     # BEV configuration.
     point_cloud_range=point_cloud_range,
     bev_h=bev_h_,
@@ -308,6 +329,11 @@ model = dict(
         plan_grid_conf=plan_grid_conf,
         bev_h=bev_h_,
         bev_w=bev_w_,
+        output_multi_traj=output_multi_traj,
+        sample_traj_nums=sample_traj_nums,
+        use_sim_reward=use_sim_reward,
+        plan_query_nums=plan_query_nums,
+        plan_query_mode=plan_query_mode,
         transformer=dict(
             type='PlanTransformer',
             embed_dims=_dim_,

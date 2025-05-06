@@ -82,8 +82,8 @@ class Drive_OccWorld(BEVFormer):
         self.use_reward_model = use_reward_model
         if use_reward_model:
             self.reward_model = builder.build_head(reward_model)
-            self.future_reward_model_frame_idx = future_reward_model_frame_idx if future_reward_model_frame_idx is not None else [future_pred_frame_num]
             self.use_sim_reward = use_sim_reward
+        self.future_reward_model_frame_idx = future_reward_model_frame_idx if future_reward_model_frame_idx is not None else [future_pred_frame_num]
 
         # occ head
         self.future_pred_head = builder.build_head(future_pred_head)
@@ -352,7 +352,7 @@ class Drive_OccWorld(BEVFormer):
         # 这里需要改成可以控制只使用imitation reward或者simulation reward或者两者都使用
         pose_pred, pose_loss, multi_traj, sim_rewards = self.plan_head(bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj)
         im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(bev, pose_pred)
-        sim_traj_rewards = sim_traj_rewards.sigmoid()
+        sim_traj_rewards = sim_traj_rewards.sigmoid() if sim_traj_rewards is not None else None
 
         if self.training:
             # 1. im_loss gt的loss
