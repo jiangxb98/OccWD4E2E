@@ -9,7 +9,7 @@ cd /cache/guangfeng/wd4e2e/OccWD4E2E
 
 # 创建日志文件夹
 # 已经创建好了 /cache/guangfeng/wd4e2e/output_logs_jgf
-
+LOG_DIR=/cache/guangfeng/wd4e2e/output_logs_jgf
 
 # 2.2 微调6epoch，解冻其他参数
 # 训练
