@@ -94,6 +94,8 @@ use_sim_reward = True    # 使用simulation reward
 sim_reward_nums = 1       # simulation reward head nums
 plan_query_nums = 1       # plan query nums
 freeze_model_name = ['img_backbone', 'img_neck', 'future_pred_head', 'pts_bbox_head']
+future_reward_model_frame_idx = [4]
+plan_traj_for_sim_reward_epoch = 6
 
 model = dict(
     type='Drive_OccWorld',
@@ -108,6 +110,7 @@ model = dict(
     use_sim_reward=use_sim_reward,
     # Reward model config
     use_reward_model=use_reward_model,
+    future_reward_model_frame_idx=future_reward_model_frame_idx,
     reward_model=dict(
         type='RewardConvNet',
         bev_h=bev_h_,
@@ -332,6 +335,7 @@ model = dict(
         sample_traj_nums=sample_traj_nums,
         use_sim_reward=use_sim_reward,
         plan_query_nums=plan_query_nums,
+        plan_traj_for_sim_reward_epoch=plan_traj_for_sim_reward_epoch,
         transformer=dict(
             type='PlanTransformer',
             embed_dims=_dim_,

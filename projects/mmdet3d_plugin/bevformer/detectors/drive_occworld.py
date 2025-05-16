@@ -350,7 +350,7 @@ class Drive_OccWorld(BEVFormer):
 
     def plan_with_reward(self, bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj):
         # 这里需要改成可以控制只使用imitation reward或者simulation reward或者两者都使用
-        pose_pred, pose_loss, multi_traj, sim_rewards = self.plan_head(bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj)
+        pose_pred, pose_loss, multi_traj, sim_rewards = self.plan_head(bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj, self.training_epoch)
         im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(bev, pose_pred)
         sim_traj_rewards = sim_traj_rewards.sigmoid() if sim_traj_rewards is not None else None
 

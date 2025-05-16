@@ -178,6 +178,7 @@ class PlanHead_v1(BaseModule):
                  use_sim_reward=False,
                  plan_query_nums=1,
                  plan_query_mode='first',  # 'mean', 'max', 'min', 'first'
+                 plan_traj_for_sim_reward_epoch=999999,
                  *args,
                  **kwargs):
 
@@ -189,6 +190,7 @@ class PlanHead_v1(BaseModule):
         self.use_sim_reward = use_sim_reward
         self.plan_query_mode = plan_query_mode
         self.plan_query_nums = plan_query_nums
+        self.plan_traj_for_sim_reward_epoch = plan_traj_for_sim_reward_epoch
         # cls
         self.instance_cls = torch.tensor(instance_cls, requires_grad=False)  # 'bicycle', 'bus', 'car', 'construction', 'motorcycle', 'pedestrian', 'trailer', 'truck'
         self.drivable_area_cls = torch.tensor(drivable_area_cls, requires_grad=False)  # 'drivable_area'
@@ -358,7 +360,7 @@ class PlanHead_v1(BaseModule):
         return select_traj
 
     @auto_fp16(apply_to=('bev_feats'))
-    def forward(self, bev_feats, trajs, sem_occupancy, command, gt_trajs=None, multi_traj=False):
+    def forward(self, bev_feats, trajs, sem_occupancy, command, gt_trajs=None, multi_traj=False, training_epoch=0):
         """ Forward function for each frame.
 
         Args:
@@ -370,6 +372,7 @@ class PlanHead_v1(BaseModule):
             gt_trajs: bs, 3                 current -> next frame, under ref_liar
         """
         cur_trajs = []
+        # 根据导航命令选择相应的轨迹子集, 这个command就是gt信息吧，导航信息算是gt吗？
         for i in range(len(command)):
             command_i = command[i]
             traj = trajs[i]
@@ -409,7 +412,7 @@ class PlanHead_v1(BaseModule):
 
         if self.output_multi_traj and multi_traj:
             # 1. select_traj
-            select_traj_ = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area, self.sample_traj_nums)  # B,3
+            select_traj_ = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area, self.sample_traj_nums)  # B,num_traj,3
             # 2. random select traj_nums from cur_trajs
             # select_traj_ = cur_trajs[torch.randperm(cur_trajs.shape[1])[:, :self.sample_traj_nums]]
 
@@ -467,7 +470,10 @@ class PlanHead_v1(BaseModule):
             # 计算sim_rewards
             sim_rewards = None
             if self.use_sim_reward and self.training:
-                sim_rewards = self.cal_sim_reward(select_traj_, gt_trajs, None, instance_occupancy, drivable_area)
+                if training_epoch < self.plan_traj_for_sim_reward_epoch:
+                    sim_rewards = self.cal_sim_reward(select_traj_, gt_trajs, None, instance_occupancy, drivable_area)
+                else:
+                    sim_rewards = self.cal_sim_reward(next_pose.detach().clone().transpose(1, 0), gt_trajs, None, instance_occupancy, drivable_area)
 
             return next_pose, loss, select_traj_.to(torch.float32), sim_rewards
         else:
