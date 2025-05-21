@@ -11,7 +11,7 @@ from projects.mmdet3d_plugin.bevformer.modules import reward_model
 from projects.mmdet3d_plugin.models.utils.grid_mask import GridMask
 from projects.mmdet3d_plugin.bevformer.losses.plan_reg_loss_lidar import plan_reg_loss
 from projects.mmdet3d_plugin.bevformer.utils.metric_stp3 import PlanningMetric
-from projects.mmdet3d_plugin.bevformer.utils.planning_metrics import PlanningMetric_v2
+from projects.mmdet3d_plugin.bevformer.utils.planning_metrics import PlanningMetric_v2, PlanningMetric_v3
 from torchvision.transforms.functional import rotate
 
 from .bevformer import BEVFormer
@@ -73,6 +73,7 @@ class Drive_OccWorld(BEVFormer):
                  freeze_model_name=None,
                  future_reward_model_frame_idx=None,
                  use_sim_reward=False,  # for simulation reward
+                 planning_metric_type='v2',
                  *args,
                  **kwargs,):
 
@@ -84,6 +85,7 @@ class Drive_OccWorld(BEVFormer):
             self.reward_model = builder.build_head(reward_model)
             self.use_sim_reward = use_sim_reward
         self.future_reward_model_frame_idx = future_reward_model_frame_idx if future_reward_model_frame_idx is not None else [future_pred_frame_num]
+        self.training_epoch = 0
 
         # occ head
         self.future_pred_head = builder.build_head(future_pred_head)
@@ -110,7 +112,13 @@ class Drive_OccWorld(BEVFormer):
             self.plan_head = builder.build_head(plan_head)
             self.plan_head_type = plan_head.type
             self.planning_metric = None
-            self.planning_metric_v2 = PlanningMetric_v2(n_future=future_pred_frame_num+1)
+            self.planning_metric_type = planning_metric_type
+            if planning_metric_type == 'v2':
+                self.planning_metric_v2 = PlanningMetric_v2(n_future=future_pred_frame_num+1)
+            elif planning_metric_type == 'v3':
+                self.planning_metric_v2 = PlanningMetric_v3(n_future=future_pred_frame_num+1)
+            else:
+                raise ValueError(f'Unknown planning metric type: {planning_metric_type}')
         
         # memory queue
         self.memory_queue_len = memory_queue_len
@@ -293,7 +301,7 @@ class Drive_OccWorld(BEVFormer):
         # use translation_xy
         if self.future_pred_head.use_plan_traj:
             future2ref = future2ref.transpose(-1, -2)
-            future2ref[:, :2, 3] = translation_xy
+            future2ref[:, :2, 3] = translation_xy  # 如果使用预测轨迹，则更新变换矩阵
             future2ref = future2ref.transpose(-1, -2)
             future2ref = future2ref.detach().clone()
 
@@ -323,7 +331,7 @@ class Drive_OccWorld(BEVFormer):
         # 4. align target coordinates of future frame to each of previous frames.
         aligned_bev_coords = torch.cat([
             bev_coords, torch.ones_like(bev_coords[..., :2])], -1)
-        aligned_bev_coords = torch.matmul(aligned_bev_coords, future_to_history_list)
+        aligned_bev_coords = torch.matmul(aligned_bev_coords, future_to_history_list)  # 将future的坐标变换到history的坐标系下
         aligned_bev_coords = aligned_bev_coords[..., :2]
         aligned_bev_grids, _ = e2e_predictor_utils.bev_coords_to_grids(
             aligned_bev_coords, self.bev_h, self.bev_w, self.point_cloud_range)
@@ -333,6 +341,8 @@ class Drive_OccWorld(BEVFormer):
 
         # 5. get target bev_grids at target future frame.
         tgt_grids = bev_grids[:, -1].contiguous()
+
+        # 6. 返回
         return tgt_grids, aligned_bev_grids, ref2future, future_to_history_list.transpose(-1, -2)
     
 
@@ -702,6 +712,7 @@ class Drive_OccWorld(BEVFormer):
             segmentation (list[torch.Tensor])
             flow (list[torch.Tensor])
             sample_traj
+            sdc_planning: 这个是统一到初始帧的lidar坐标系下的轨迹,具体代码看NuScenesTraj.get_sdc_planning_label
         Returns:
             dict: Losses of different branches.
         """

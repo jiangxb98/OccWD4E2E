@@ -8,6 +8,7 @@ echo "Changing directory to /cache/guangfeng/wd4e2e/OccWD4E2E"
 cd /cache/guangfeng/wd4e2e/OccWD4E2E
 
 # 创建日志文件夹
+# 这个路径需要mkdir在云道通过url输出的路径下(echo $OUTPUT_URL/)，然后软链接到下面这个地址(/cache/guangfeng/wd4e2e/output_logs_jgf)
 # 已经创建好了 /cache/guangfeng/wd4e2e/output_logs_jgf
 LOG_DIR=/cache/guangfeng/wd4e2e/output_logs_jgf
 

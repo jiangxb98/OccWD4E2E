@@ -279,7 +279,7 @@ class NuScenesTraj(object):
         n_valid_timestep = len(planning)
         if n_valid_timestep>0:
             planning = [p.tensor.squeeze(0) for p in planning]
-            planning = np.stack(planning, axis=0)  # (valid_t, 9)
+            planning = np.stack(planning, axis=0)  # (valid_t, 9)# 这里都是初始帧lidar坐标系下的自车值
             planning = planning[:, [0,1,6]]  # (x, y, yaw)
             planning[:, 2] = ego_yaw    # delta_yaw 角度
             planning_all[:,:n_valid_timestep,:] = planning

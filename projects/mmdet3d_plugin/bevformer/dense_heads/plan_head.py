@@ -491,7 +491,7 @@ class PlanHead_v1(BaseModule):
             plan_query = self.plan_embedding.weight.to(dtype)
             plan_query = plan_query[None]
             # 当使用多个plan_query时，取平均
-            if plan_query.shape[1] > 0:
+            if plan_query.shape[1] > 1:
                 if self.plan_query_mode == 'first':
                     plan_query = plan_query[:, 0, :][:, None]
                 elif self.plan_query_mode == 'mean':
