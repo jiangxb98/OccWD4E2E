@@ -74,6 +74,7 @@ class Drive_OccWorld(BEVFormer):
                  future_reward_model_frame_idx=None,
                  use_sim_reward=False,  # for simulation reward
                  planning_metric_type='v2',
+                 cumsum_for_gt_traj=True,  # 是否对gt轨迹进行累积求和, 默认开源的是True，但是对照了UniAD的代码，发现是不需要对gt轨迹进行累积求和的
                  *args,
                  **kwargs,):
 
@@ -86,7 +87,7 @@ class Drive_OccWorld(BEVFormer):
             self.use_sim_reward = use_sim_reward
         self.future_reward_model_frame_idx = future_reward_model_frame_idx if future_reward_model_frame_idx is not None else [future_pred_frame_num]
         self.training_epoch = 0
-
+        self.cumsum_for_gt_traj = cumsum_for_gt_traj
         # occ head
         self.future_pred_head = builder.build_head(future_pred_head)
         # flow head
@@ -626,7 +627,11 @@ class Drive_OccWorld(BEVFormer):
     def compute_plan_loss(self, outs_planning, sdc_planning, sdc_planning_mask, gt_future_boxes):
         ## outs_planning, sdc_planning: under ref_lidar coord
         pred_under_ref = torch.cumsum(outs_planning, dim=1)  # 用于计算张量沿指定维度的累积和
-        gt_under_ref = torch.cumsum(sdc_planning, dim=1)
+
+        if self.cumsum_for_gt_traj:
+            gt_under_ref = torch.cumsum(sdc_planning, dim=1)
+        else:
+            gt_under_ref = sdc_planning
 
         losses_plan = self.plan_head.loss(pred_under_ref, gt_under_ref, sdc_planning_mask, gt_future_boxes)
         return losses_plan
@@ -675,7 +680,11 @@ class Drive_OccWorld(BEVFormer):
 
         # pred, gt: under ref_lidar coord
         pred_under_ref = torch.cumsum(next_pose_preds[..., :2], dim=1)
-        gt_under_ref = torch.cumsum(next_pose_gts[..., :2], dim=1).float()
+
+        if self.cumsum_for_gt_traj:
+            gt_under_ref = torch.cumsum(next_pose_gts[..., :2], dim=1).float()
+        else:
+            gt_under_ref = next_pose_gts[..., :2].float()
 
         if self._viz_pcd_flag:
             save_data = np.load(os.path.join(self._viz_pcd_path, img_metas[0]["scene_token"]+'_'+img_metas[0]["lidar_token"]+'.npz'), allow_pickle=True)

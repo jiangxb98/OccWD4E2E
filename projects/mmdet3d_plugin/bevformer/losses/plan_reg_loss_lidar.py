@@ -1,6 +1,6 @@
 import torch
 
-def plan_reg_loss(pred_pose, rel_poses, gt_modes, return_last=False, loss_type='l2'):
+def plan_reg_loss(pred_pose, rel_poses, gt_modes, return_last=False, loss_type='l2', cumsum_for_gt_traj=True):
     """
         pred_pose: B,Lout,num_modes=3,2
         rel_poses: B,Lout,2
@@ -13,7 +13,9 @@ def plan_reg_loss(pred_pose, rel_poses, gt_modes, return_last=False, loss_type='
 
     gt_modes = gt_modes.transpose(1, 2) # B,M,F
     rel_poses = rel_poses.unsqueeze(1).repeat(1, num_modes, 1, 1)   # B, M(repeat), F, 2
-    rel_poses = torch.cumsum(rel_poses, -2) # B,M,F,2
+    
+    if cumsum_for_gt_traj:
+        rel_poses = torch.cumsum(rel_poses, -2) # B,M,F,2
 
     if return_last:
         pred_pose = pred_pose.new_tensor(pred_pose[:, :, -1:])
