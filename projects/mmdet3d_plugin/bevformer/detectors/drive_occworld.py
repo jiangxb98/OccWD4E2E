@@ -74,6 +74,7 @@ class Drive_OccWorld(BEVFormer):
                  future_reward_model_frame_idx=None,
                  use_sim_reward=False,  # for simulation reward
                  planning_metric_type='v2',
+                 # 这里作者在uni2one中已经将gt的轨迹变为相对的轨迹了，所以需要设置为True
                  cumsum_for_gt_traj=True,  # 是否对gt轨迹进行累积求和, 默认开源的是True，但是对照了UniAD的代码，发现是不需要对gt轨迹进行累积求和的
                  *args,
                  **kwargs,):
@@ -677,6 +678,29 @@ class Drive_OccWorld(BEVFormer):
             segmentation_bev:   B,Lout,h,w
         """
         next_pose_gts = sdc_planning
+
+        if False:
+            import matplotlib.pyplot as plt
+            # 画一个图，横坐标是bev的x坐标，纵坐标是bev的y坐标，画出pred_ego_fut_trajs和gt_ego_fut_trajs，保存为png
+            plt.figure()
+            plt.plot(next_pose_gts.cpu().numpy()[0, :, 0], next_pose_gts.cpu().numpy()[0, :, 1], 'b-', label='gt_ego_fut_trajs')
+            plt.plot(next_pose_preds.cpu().numpy()[0, :, 0], next_pose_preds.cpu().numpy()[0, :, 1], 'r-', label='pred_ego_fut_trajs')
+            plt.legend()
+            plt.savefig('work_dirs/trajectory.png')
+            plt.close()
+
+            plt.figure()
+            plt.plot(gt_under_ref.cpu().numpy()[0, :, 0], gt_under_ref.cpu().numpy()[0, :, 1], 'b-', label='gt_ego_fut_trajs')
+            plt.plot(pred_under_ref.cpu().numpy()[0, :, 0], pred_under_ref.cpu().numpy()[0, :, 1], 'r-', label='pred_ego_fut_trajs')
+            plt.legend()
+            plt.savefig('work_dirs/trajectory_cumsum.png')
+            plt.close()
+
+            # 画一个图，可视化segmentation_bev,sementation_bev是由0,1元素组成的，0表示背景，1表示物体，画出segmentation_bev的图，保存为png
+            plt.figure()
+            plt.imshow(segmentation_bev[0, :, :, 0].cpu().numpy())
+            plt.savefig('work_dirs/segmentation_bev.png')
+            plt.close()
 
         # pred, gt: under ref_lidar coord
         pred_under_ref = torch.cumsum(next_pose_preds[..., :2], dim=1)
