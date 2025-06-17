@@ -800,7 +800,16 @@ class Drive_OccWorld(BEVFormer):
             sem_occupancy = F.interpolate(sem_occupancy, size=(self.bev_h, self.bev_w, self.future_pred_head.num_pred_height), mode='nearest')
             ref_sem_occupancy = sem_occupancy[:, 0]
             # 这里是输出当前帧的预测轨迹，如果添加reward模型，那么应该是输出多个轨迹，然后使最优的轨迹输出最大
-            ref_bev, ref_pose_pred, ref_pose_loss, im_reward_loss, sim_reward_loss = self.obtain_ref_bev_with_plan(img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj)
+            # 注意：这里的是根据当前帧预测未来的occ和轨迹，当前帧没有上一帧的plan_traj，所以你进入这个函数后会发现预测未来occ函数使用的是self.future_pred_head.forward_head
+            # 这个与带condition预测未来occ是不一样的，带condition是self.future_pred_head.forward()即可
+            ref_bev, ref_pose_pred, ref_pose_loss, im_reward_loss, sim_reward_loss = self.obtain_ref_bev_with_plan(img, 
+                                                                                                                   img_metas, 
+                                                                                                                   prev_bev, 
+                                                                                                                   ref_sample_traj, 
+                                                                                                                   ref_sem_occupancy, 
+                                                                                                                   ref_command, 
+                                                                                                                   ref_real_traj,
+                                                                                                                   is_multi_traj=True if 0 in self.future_reward_model_frame_idx else False)
         else:
             ref_bev = self.obtain_ref_bev(img, img_metas, prev_bev)
             sem_occupancy, ref_pose_pred, ref_pose_loss = None, None, None

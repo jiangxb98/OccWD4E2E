@@ -29,7 +29,7 @@ def compute_im_reward_loss(
     # Calculate L2 distance between each of the 256 predefined trajectories and the target trajectory
     num_trajs = trajectory_samples.shape[1]
     trajectory_samples = trajectory_samples.reshape(num_trajs, -1).unsqueeze(0).repeat(Bz, 1, 1).to(target_trajectory.device)
-    l2_distances = torch.cdist(trajectory_samples, target_trajectory, p=2)  # Shape: [batch_size, 256]
+    l2_distances = torch.cdist(trajectory_samples[:, :, :2], target_trajectory[:, :, :2], p=2)  # Shape: [batch_size, 256]
     l2_distances = l2_distances.squeeze(-1)
 
     # Apply softmax to L2 distances to get reward targets

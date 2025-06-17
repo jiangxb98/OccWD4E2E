@@ -179,6 +179,7 @@ class PlanHead_v1(BaseModule):
                  plan_query_nums=1,
                  plan_query_mode='first',  # 'mean', 'max', 'min', 'first'
                  plan_traj_for_sim_reward_epoch=999999,
+                 random_select=False,
                  *args,
                  **kwargs):
 
@@ -191,6 +192,7 @@ class PlanHead_v1(BaseModule):
         self.plan_query_mode = plan_query_mode
         self.plan_query_nums = plan_query_nums
         self.plan_traj_for_sim_reward_epoch = plan_traj_for_sim_reward_epoch
+        self.random_select = random_select
         # cls
         self.instance_cls = torch.tensor(instance_cls, requires_grad=False)  # 'bicycle', 'bus', 'car', 'construction', 'motorcycle', 'pedestrian', 'trailer', 'truck'
         self.drivable_area_cls = torch.tensor(drivable_area_cls, requires_grad=False)  # 'drivable_area'
@@ -313,7 +315,7 @@ class PlanHead_v1(BaseModule):
 
         sm_cost_fo = self.cost_function(cost_volume, trajs[:,:,:2], instance_occupancy, drivable_area)
 
-        L = F.relu(gt_cost_fo - sm_cost_fo)  # 为什么这里用relu?
+        L = F.relu(gt_cost_fo - sm_cost_fo)  # 为什么这里用relu?，如果sm的更好，那么就为0，如果gt的更好，那么就为relu(gt-sm)
 
         return torch.mean(L)
 
@@ -356,6 +358,31 @@ class PlanHead_v1(BaseModule):
 
         ii = torch.arange(len(trajs))
         select_traj = trajs[ii[:,None], KK].squeeze(1) # (B, 3)
+
+        return select_traj
+
+    def select_multi_traj(self, trajs, cost_volume, instance_occupancy, drivable_area, k=1, random_select=False):
+        '''
+        trajs: torch.Tensor (B, N, 3)
+        cost_volume: torch.Tensor (B, 200, 200)
+        instance_occupancy: torch.Tensor(B, 200, 200)
+        drivable_area: torch.Tensor(B, 200, 200)
+        '''
+        sm_cost_fo = self.cost_function(cost_volume, trajs[:,:,:2], instance_occupancy, drivable_area)
+        CS = sm_cost_fo
+
+        if random_select:
+            sample_best_k = 5
+            _, KK = torch.topk(CS, sample_best_k, dim=-1, largest=False)   # B,N_sample
+            ii = torch.arange(len(trajs))
+            select_traj = trajs[ii[:,None], KK].squeeze(1) # (B, N_sample, 3)
+            reset_k = k - sample_best_k
+            select_traj_ = trajs[torch.randperm(trajs.shape[1])[:, :reset_k]]
+            select_traj = torch.cat([select_traj, select_traj_], dim=1)
+        else:
+            CC, KK = torch.topk(CS, k, dim=-1, largest=False)   # B,N_sample
+            ii = torch.arange(len(trajs))
+            select_traj = trajs[ii[:,None], KK].squeeze(1) # (B, N_sample, 3)
 
         return select_traj
 
@@ -411,8 +438,10 @@ class PlanHead_v1(BaseModule):
             loss = None
 
         if self.output_multi_traj and multi_traj:
+            # 去掉多余的重复轨迹用来计算sim_reward
+            cur_trajs = cur_trajs[:, :self.sample_traj_nums, :]
             # 1. select_traj
-            select_traj_ = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area, self.sample_traj_nums)  # B,num_traj,3
+            select_traj_ = self.select_multi_traj(cur_trajs, costvolume, instance_occupancy, drivable_area, self.sample_traj_nums, self.random_select)  # B,num_traj,3
             # 2. random select traj_nums from cur_trajs
             # select_traj_ = cur_trajs[torch.randperm(cur_trajs.shape[1])[:, :self.sample_traj_nums]]
 
