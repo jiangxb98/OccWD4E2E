@@ -96,6 +96,7 @@ plan_query_nums = 1       # plan query nums
 freeze_model_name = ['img_backbone', 'img_neck', 'future_pred_head', 'pts_bbox_head']
 future_reward_model_frame_idx = [1, 2, 3, 4, 5]
 plan_traj_for_sim_reward_epoch = 999999   # 这个是启动simulation reward的epoch
+random_select = True
 
 model = dict(
     type='Drive_OccWorld',
@@ -333,6 +334,7 @@ model = dict(
         bev_w=bev_w_,
         output_multi_traj=output_multi_traj,
         sample_traj_nums=sample_traj_nums,
+        random_select=random_select,
         use_sim_reward=use_sim_reward,
         plan_query_nums=plan_query_nums,
         plan_traj_for_sim_reward_epoch=plan_traj_for_sim_reward_epoch,

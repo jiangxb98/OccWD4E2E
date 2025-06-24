@@ -72,10 +72,12 @@ class Drive_OccWorld(BEVFormer):
                  reward_model=None,
                  freeze_model_name=None,
                  future_reward_model_frame_idx=None,
+                 random_select_reward_model_frame=False,
                  use_sim_reward=False,  # for simulation reward
                  planning_metric_type='v2',
                  # 这里作者在uni2one中已经将gt的轨迹变为相对的轨迹了，所以需要设置为True
                  cumsum_for_gt_traj=True,  # 是否对gt轨迹进行累积求和, 默认开源的是True，但是对照了UniAD的代码，发现是不需要对gt轨迹进行累积求和的
+                 freeze_reward_input=False,
                  *args,
                  **kwargs,):
 
@@ -83,10 +85,12 @@ class Drive_OccWorld(BEVFormer):
 
         # reward model
         self.use_reward_model = use_reward_model
+        self.freeze_reward_input = freeze_reward_input
         if use_reward_model:
             self.reward_model = builder.build_head(reward_model)
             self.use_sim_reward = use_sim_reward
         self.future_reward_model_frame_idx = future_reward_model_frame_idx if future_reward_model_frame_idx is not None else [future_pred_frame_num]
+        self.random_select_reward_model_frame = random_select_reward_model_frame
         self.training_epoch = 0
         self.cumsum_for_gt_traj = cumsum_for_gt_traj
         # occ head
@@ -458,7 +462,10 @@ class Drive_OccWorld(BEVFormer):
                 next_sim_rewards.append(plan_dict['sim_reward_loss'])
 
         if self.training:
-            reward_model_frame_idx = self.future_reward_model_frame_idx
+            if self.random_select_reward_model_frame:
+                reward_model_frame_idx = [np.random.randint(1, self.future_pred_frame_num + 1)]
+            else:
+                reward_model_frame_idx = self.future_reward_model_frame_idx
         else:
             reward_model_frame_idx = list(range(1, self.future_pred_frame_num + 1))
 

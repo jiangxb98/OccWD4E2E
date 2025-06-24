@@ -97,6 +97,7 @@ freeze_model_name = ['img_backbone', 'img_neck', 'future_pred_head', 'pts_bbox_h
 future_reward_model_frame_idx = [future_queue_length_train]
 plan_traj_for_sim_reward_epoch = 999999   # 这个是启动simulation reward的epoch
 random_select = True
+random_select_reward_model_frame = True
 
 model = dict(
     type='Drive_OccWorld',
@@ -112,6 +113,7 @@ model = dict(
     # Reward model config
     use_reward_model=use_reward_model,
     future_reward_model_frame_idx=future_reward_model_frame_idx,
+    random_select_reward_model_frame=random_select_reward_model_frame,
     reward_model=dict(
         type='RewardConvNet',
         bev_h=bev_h_,

@@ -377,7 +377,7 @@ class PlanHead_v1(BaseModule):
             ii = torch.arange(len(trajs))
             select_traj = trajs[ii[:,None], KK].squeeze(1) # (B, N_sample, 3)
             reset_k = k - sample_best_k
-            select_traj_ = trajs[torch.randperm(trajs.shape[1])[:, :reset_k]]
+            select_traj_ = trajs[:, torch.randperm(trajs.shape[1])[:reset_k]]
             select_traj = torch.cat([select_traj, select_traj_], dim=1)
         else:
             CC, KK = torch.topk(CS, k, dim=-1, largest=False)   # B,N_sample
@@ -439,7 +439,7 @@ class PlanHead_v1(BaseModule):
 
         if self.output_multi_traj and multi_traj:
             # 去掉多余的重复轨迹用来计算sim_reward
-            cur_trajs = cur_trajs[:, :self.sample_traj_nums, :]
+            cur_trajs = cur_trajs[:, :self.num, :]
             # 1. select_traj
             select_traj_ = self.select_multi_traj(cur_trajs, costvolume, instance_occupancy, drivable_area, self.sample_traj_nums, self.random_select)  # B,num_traj,3
             # 2. random select traj_nums from cur_trajs
