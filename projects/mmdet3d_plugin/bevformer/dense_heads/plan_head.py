@@ -335,11 +335,11 @@ class PlanHead_v1(BaseModule):
         if gt_trajs.ndim == 2:
             gt_trajs = gt_trajs[:, None]
 
-        if self.use_gt_occ_for_sim_reward and self.training:
-            # 训练阶段可以使用GT的occupancy来计算sim reward
-            cost = self.cost_function.forward_sim(gt_trajs[:,:,:2], instance_occupancy, drivable_area)
-        else:
-            cost = self.cost_function.forward_sim(trajs[:,:,:2], instance_occupancy, drivable_area)
+        # if self.use_gt_occ_for_sim_reward and self.training:
+        #     # 训练阶段可以使用GT的occupancy来计算sim reward
+        #     cost = self.cost_function.forward_sim(gt_trajs[:,:,:2], instance_occupancy, drivable_area)
+        # else:
+        cost = self.cost_function.forward_sim(trajs[:,:,:2], instance_occupancy, drivable_area)
 
         pos_mask = cost <= 0
         neg_mask = cost > 0

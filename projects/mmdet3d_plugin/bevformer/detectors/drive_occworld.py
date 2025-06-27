@@ -370,7 +370,8 @@ class Drive_OccWorld(BEVFormer):
         # 这里需要改成可以控制只使用imitation reward或者simulation reward或者两者都使用
         pose_pred, pose_loss, multi_traj, sim_rewards = self.plan_head(bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj, self.training_epoch)
         im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(bev, pose_pred)
-        sim_traj_rewards = sim_traj_rewards.sigmoid() if sim_traj_rewards is not None else None
+        # sim_traj_rewards = sim_traj_rewards.sigmoid() if sim_traj_rewards is not None else None
+        sim_traj_rewards = sim_traj_rewards if sim_traj_rewards is not None else None
 
         if self.training:
             if im_traj_rewards is not None and self.use_im_reward:
@@ -379,6 +380,7 @@ class Drive_OccWorld(BEVFormer):
             else:
                 im_reward_loss = None
             # 2. sim_loss, 根据世界模型的输出，计算sim_loss
+            # 注意这里存在问题，sim_rewards可能都是1，那么选最大的就是默认第一个了
             if sim_rewards is not None and sim_traj_rewards is not None and self.use_sim_reward:
                 sim_reward_loss = compute_sim_reward_loss(sim_rewards, sim_traj_rewards)
             else:
@@ -390,15 +392,15 @@ class Drive_OccWorld(BEVFormer):
             if self.use_im_reward and not self.use_sim_reward and im_traj_rewards is not None:
                 all_rewards = im_reward_targets
                 max_reward_idx = all_rewards.argmax()
-                pose_pred = pose_pred[max_reward_idx]  # [bs, 1, 2]
+                pose_pred = pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
             elif self.use_sim_reward and not self.use_im_reward and sim_rewards is not None:
                 all_rewards = sim_rewards
                 max_reward_idx = all_rewards.argmax()
-                pose_pred = pose_pred[max_reward_idx]  # [bs, 1, 2]
+                pose_pred = pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
             elif self.use_im_reward and self.use_sim_reward and im_traj_rewards is not None and sim_rewards is not None:
                 all_rewards = im_reward_targets + sim_rewards
                 max_reward_idx = all_rewards.argmax()
-                pose_pred = pose_pred[max_reward_idx]  # [bs, 1, 2]
+                pose_pred = pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
             else:
                 pose_pred
         else:
