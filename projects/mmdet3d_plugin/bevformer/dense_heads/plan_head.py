@@ -176,9 +176,11 @@ class PlanHead_v1(BaseModule):
                  output_multi_traj=False,
                  sample_traj_nums=1,
                  use_sim_reward=False,
+                 use_im_reward=False,
                  plan_query_nums=1,
                  plan_query_mode='first',  # 'mean', 'max', 'min', 'first'
                  plan_traj_for_sim_reward_epoch=999999,
+                 use_gt_occ_for_sim_reward=False,
                  random_select=False,
                  *args,
                  **kwargs):
@@ -189,10 +191,12 @@ class PlanHead_v1(BaseModule):
         self.output_multi_traj = output_multi_traj
         self.sample_traj_nums = sample_traj_nums
         self.use_sim_reward = use_sim_reward
+        self.use_im_reward = use_im_reward
         self.plan_query_mode = plan_query_mode
         self.plan_query_nums = plan_query_nums
         self.plan_traj_for_sim_reward_epoch = plan_traj_for_sim_reward_epoch
         self.random_select = random_select
+        self.use_gt_occ_for_sim_reward = use_gt_occ_for_sim_reward
         # cls
         self.instance_cls = torch.tensor(instance_cls, requires_grad=False)  # 'bicycle', 'bus', 'car', 'construction', 'motorcycle', 'pedestrian', 'trailer', 'truck'
         self.drivable_area_cls = torch.tensor(drivable_area_cls, requires_grad=False)  # 'drivable_area'
@@ -331,9 +335,11 @@ class PlanHead_v1(BaseModule):
         if gt_trajs.ndim == 2:
             gt_trajs = gt_trajs[:, None]
 
-        # gt_cost_fo = self.cost_function.forward_sim(gt_trajs[:,:,:2], instance_occupancy, drivable_area)
-
-        cost = self.cost_function.forward_sim(trajs[:,:,:2], instance_occupancy, drivable_area)
+        if self.use_gt_occ_for_sim_reward and self.training:
+            # 训练阶段可以使用GT的occupancy来计算sim reward
+            cost = self.cost_function.forward_sim(gt_trajs[:,:,:2], instance_occupancy, drivable_area)
+        else:
+            cost = self.cost_function.forward_sim(trajs[:,:,:2], instance_occupancy, drivable_area)
 
         pos_mask = cost <= 0
         neg_mask = cost > 0
@@ -500,8 +506,10 @@ class PlanHead_v1(BaseModule):
             sim_rewards = None
             if self.use_sim_reward and self.training:
                 if training_epoch < self.plan_traj_for_sim_reward_epoch:
+                    # 使用初始化的多模轨迹来计算sim_reward
                     sim_rewards = self.cal_sim_reward(select_traj_, gt_trajs, None, instance_occupancy, drivable_area)
                 else:
+                    # 使用预测的多模轨迹来计算sim_reward（加这个的原因是，尝试用预测的结果来计算sim_reward）
                     sim_rewards = self.cal_sim_reward(next_pose.detach().clone().transpose(1, 0), gt_trajs, None, instance_occupancy, drivable_area)
 
             return next_pose, loss, select_traj_.to(torch.float32), sim_rewards

@@ -12,7 +12,8 @@ class RewardConvNet(nn.Module):
                  bev_h: int = 200,
                  bev_w: int = 200,
                  sim_reward_nums: int = 0,
-                 use_sim_reward: bool = True):
+                 use_sim_reward: bool = True,
+                 use_im_reward: bool = True):
         """
         Initialize RewardConvNet.
 
@@ -28,7 +29,7 @@ class RewardConvNet(nn.Module):
         self.fut_traj_num = fut_traj_num
         self.sim_reward_nums = sim_reward_nums
         self.use_sim_reward = use_sim_reward
-
+        self.use_im_reward = use_im_reward
         # 合并所有卷积层到一个Sequential中
         self.conv_reward_net = nn.Sequential(
             # 第一个卷积块
@@ -176,8 +177,13 @@ class RewardConvNet(nn.Module):
         
         x_cat = self.cat_encoder(torch.cat([reward_feats, traj_feats], dim=1))
         x = self.reward_head(x_cat)
-        im_traj_scores = x.reshape(bs, num_traj)
-        im_traj_scores = im_traj_scores.softmax(dim=1)
+
+        # for imitation reward
+        if self.use_im_reward:
+            im_traj_scores = x.reshape(bs, num_traj)
+            im_traj_scores = im_traj_scores.softmax(dim=1)
+        else:
+            im_traj_scores = None
 
         # for sim reward
         if self.use_sim_reward:

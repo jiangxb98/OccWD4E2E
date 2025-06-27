@@ -42,7 +42,7 @@ def compute_im_reward_loss(
     # 输出reward_targets最大值对应的预测的轨迹索引
     max_reward_idx = torch.argmax(reward_targets, dim=-1)
 
-    return im_reward_loss, max_reward_idx
+    return im_reward_loss, reward_targets
 
 
 def compute_sim_reward_loss(

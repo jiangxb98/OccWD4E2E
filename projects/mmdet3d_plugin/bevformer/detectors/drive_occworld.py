@@ -74,6 +74,7 @@ class Drive_OccWorld(BEVFormer):
                  future_reward_model_frame_idx=None,
                  random_select_reward_model_frame=False,
                  use_sim_reward=False,  # for simulation reward
+                 use_im_reward=False,  # for imitation reward
                  planning_metric_type='v2',
                  # 这里作者在uni2one中已经将gt的轨迹变为相对的轨迹了，所以需要设置为True
                  cumsum_for_gt_traj=True,  # 是否对gt轨迹进行累积求和, 默认开源的是True，但是对照了UniAD的代码，发现是不需要对gt轨迹进行累积求和的
@@ -89,6 +90,7 @@ class Drive_OccWorld(BEVFormer):
         if use_reward_model:
             self.reward_model = builder.build_head(reward_model)
             self.use_sim_reward = use_sim_reward
+            self.use_im_reward = use_im_reward
         self.future_reward_model_frame_idx = future_reward_model_frame_idx if future_reward_model_frame_idx is not None else [future_pred_frame_num]
         self.random_select_reward_model_frame = random_select_reward_model_frame
         self.training_epoch = 0
@@ -371,18 +373,39 @@ class Drive_OccWorld(BEVFormer):
         sim_traj_rewards = sim_traj_rewards.sigmoid() if sim_traj_rewards is not None else None
 
         if self.training:
-            # 1. im_loss gt的loss
-            im_reward_loss, max_reward_idx = compute_im_reward_loss(real_traj, im_traj_rewards, multi_traj)
+            if im_traj_rewards is not None and self.use_im_reward:
+                # 1. im_loss gt的loss
+                im_reward_loss, im_reward_targets = compute_im_reward_loss(real_traj, im_traj_rewards, multi_traj)
+            else:
+                im_reward_loss = None
             # 2. sim_loss, 根据世界模型的输出，计算sim_loss
-            if sim_rewards is not None and sim_traj_rewards is not None:
+            if sim_rewards is not None and sim_traj_rewards is not None and self.use_sim_reward:
                 sim_reward_loss = compute_sim_reward_loss(sim_rewards, sim_traj_rewards)
             else:
                 sim_reward_loss = None
-            
-            pose_pred = pose_pred[max_reward_idx]  # [bs, 1, 2]
+            # 这个地方应该是选择一个最好的轨迹
+            # 这个选择的逻辑是？
+            # 1. 都默认选择gt reward最大的轨迹
+            # 2. 或者前期选择gt reward最大的轨迹, 后期选择预测reward最大的轨迹
+            if self.use_im_reward and not self.use_sim_reward and im_traj_rewards is not None:
+                all_rewards = im_reward_targets
+                max_reward_idx = all_rewards.argmax()
+                pose_pred = pose_pred[max_reward_idx]  # [bs, 1, 2]
+            elif self.use_sim_reward and not self.use_im_reward and sim_rewards is not None:
+                all_rewards = sim_rewards
+                max_reward_idx = all_rewards.argmax()
+                pose_pred = pose_pred[max_reward_idx]  # [bs, 1, 2]
+            elif self.use_im_reward and self.use_sim_reward and im_traj_rewards is not None and sim_rewards is not None:
+                all_rewards = im_reward_targets + sim_rewards
+                max_reward_idx = all_rewards.argmax()
+                pose_pred = pose_pred[max_reward_idx]  # [bs, 1, 2]
+            else:
+                pose_pred
         else:
             # max the im_traj_rewards + sim_traj_rewards
-            all_rewards = im_traj_rewards
+            all_rewards = 0
+            if im_traj_rewards is not None:
+                all_rewards = all_rewards + im_traj_rewards
             if sim_traj_rewards is not None:
                 all_rewards = all_rewards + sim_traj_rewards
             max_reward_idx = all_rewards.argmax()
@@ -895,10 +918,13 @@ class Drive_OccWorld(BEVFormer):
         # E5. Compute loss for reward model
         if self.use_reward_model:
             # imitation reward (required)
-            losses_reward = sum(next_im_rewards) / len(next_im_rewards)
+            if len(next_im_rewards) > 0 and self.use_im_reward:
+                losses_reward = sum(next_im_rewards) / len(next_im_rewards)
+            else:
+                losses_reward = 0
             # simulation reward (optional)
             if len(next_sim_rewards) > 0 and self.use_sim_reward:
-                losses_reward = losses_reward + sum(next_sim_rewards) / len(next_sim_rewards)
+                losses_reward = losses_reward + sum(next_sim_rewards) / len(next_sim_rewards) if losses_reward != 0 else sum(next_sim_rewards) / len(next_sim_rewards)
             losses.update(losses_reward=losses_reward * 0.1)
 
         return losses
