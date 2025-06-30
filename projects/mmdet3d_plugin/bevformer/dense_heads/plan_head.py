@@ -341,13 +341,13 @@ class PlanHead_v1(BaseModule):
         # else:
         cost = self.cost_function.forward_sim(trajs[:,:,:2], instance_occupancy, drivable_area)
 
+        # cost=0表示没有碰撞
         pos_mask = cost <= 0
         neg_mask = cost > 0
         
         cost[pos_mask] = 1
         cost[neg_mask] = 0
 
-        # 0 is good
         return cost
     
     def select(self, trajs, cost_volume, instance_occupancy, drivable_area, k=1):

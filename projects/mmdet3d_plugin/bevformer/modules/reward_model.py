@@ -12,8 +12,8 @@ class RewardConvNet(nn.Module):
                  bev_h: int = 200,
                  bev_w: int = 200,
                  sim_reward_nums: int = 0,
-                 use_sim_reward: bool = True,
-                 use_im_reward: bool = True):
+                 use_sim_reward: bool = False,
+                 use_im_reward: bool = False):
         """
         Initialize RewardConvNet.
 
@@ -67,11 +67,13 @@ class RewardConvNet(nn.Module):
         )
 
         # MLP head for scoring
-        self.reward_head = nn.Sequential(
-            nn.Linear(hidden_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 1),
-        )
+        self.reward_head = None
+        if self.use_im_reward:
+            self.reward_head = nn.Sequential(
+                nn.Linear(hidden_dim, 128),
+                nn.ReLU(),
+                nn.Linear(128, 1),
+            )
 
         # for sim reward
         self.sim_reward_heads = None
@@ -176,10 +178,10 @@ class RewardConvNet(nn.Module):
         reward_feats = reward_feats.repeat(bs*num_traj, 1, 1, 1).squeeze(-1).squeeze(-1)
         
         x_cat = self.cat_encoder(torch.cat([reward_feats, traj_feats], dim=1))
-        x = self.reward_head(x_cat)
-
+        
         # for imitation reward
         if self.use_im_reward:
+            x = self.reward_head(x_cat)
             im_traj_scores = x.reshape(bs, num_traj)
             im_traj_scores = im_traj_scores.softmax(dim=1)
         else:

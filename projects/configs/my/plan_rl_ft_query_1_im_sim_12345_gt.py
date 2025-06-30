@@ -91,14 +91,14 @@ use_reward_model = True   # 使用奖励模型，True use the imitation reward
 output_multi_traj = True  # 输出多条轨迹
 sample_traj_nums = 20     # 采样轨迹数
 use_sim_reward = True     # 使用simulation reward
-use_gt_occ_for_sim_reward = True
 use_im_reward = True      # 使用imitation reward
 sim_reward_nums = 1       # simulation reward head nums
 plan_query_nums = 1       # plan query nums
 freeze_model_name = ['img_backbone', 'img_neck', 'future_pred_head', 'pts_bbox_head']
-future_reward_model_frame_idx = [1,2,3,4,5]
-plan_traj_for_sim_reward_epoch = 999999   # 这个是启动simulation reward的epoch，小于这个数就是用初始化的多模轨迹来计算sim_reward
+future_reward_model_frame_idx = [1, 2, 3, 4, 5]
+plan_traj_for_sim_reward_epoch = 999999   # 这个是启动simulation reward的epoch
 random_select = True
+use_gt_occ_for_sim_reward = True
 
 model = dict(
     type='Drive_OccWorld',
