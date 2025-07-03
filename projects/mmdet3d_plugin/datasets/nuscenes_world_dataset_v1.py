@@ -166,6 +166,9 @@ class NuScenesWorldDatasetV1(NuScenesWorldDatasetTemplate):
             if future_meta['scene_token'] != current_scene_token:
                 break
 
+            if 'aug_param' in each:
+                metas_map[i]['aug_param'] = each['aug_param']
+
             # store the transformation:
             future2ref_lidar_transform.append(
                 total_cur2ref_lidar_transform[i + len(previous_queue) - 1]

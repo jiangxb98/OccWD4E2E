@@ -924,7 +924,8 @@ class Drive_OccWorld(BEVFormer):
                     # 需要更新对应的can_bus
                     for i in range(len(future_img_metas)):
                         future_img_metas[i]['can_bus'] = img_metas[0]['future_can_bus'][i+1]
-                    future_bev_feats = self.obtain_future_bev_feat(future_img[0][1:], future_img_metas, ref_bev)
+                        future_img_metas[i]['aug_param'] = img_metas[0]['aug_param']
+                    future_bev_feats = self.obtain_future_bev_feat(future_img[0][1:], [future_img_metas], ref_bev)
                 else:
                     future_bev_feats = self.obtain_future_bev_feat(future_img[0][1:], [future_img_metas], None)
 
