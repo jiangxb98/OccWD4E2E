@@ -79,6 +79,8 @@ class Drive_OccWorld(BEVFormer):
                  # 这里作者在uni2one中已经将gt的轨迹变为相对的轨迹了，所以需要设置为True
                  cumsum_for_gt_traj=True,  # 是否对gt轨迹进行累积求和, 默认开源的是True，但是对照了UniAD的代码，发现是不需要对gt轨迹进行累积求和的
                  freeze_reward_input=False,
+                 loss_bev=None,
+                 use_ref_bev_for_future_bev=False,
                  *args,
                  **kwargs,):
 
@@ -95,6 +97,10 @@ class Drive_OccWorld(BEVFormer):
         self.random_select_reward_model_frame = random_select_reward_model_frame
         self.training_epoch = 0
         self.cumsum_for_gt_traj = cumsum_for_gt_traj
+
+        self.loss_bev = builder.build_loss(loss_bev) if loss_bev is not None else None
+        self.use_ref_bev_for_future_bev = use_ref_bev_for_future_bev
+
         # occ head
         self.future_pred_head = builder.build_head(future_pred_head)
         # flow head
@@ -366,6 +372,22 @@ class Drive_OccWorld(BEVFormer):
         ref_bev = self.pts_bbox_head(img_feats, img_metas, prev_bev, only_bev=True)  # get the input
         return ref_bev
 
+    def obtain_future_bev_feat(self, future_img, future_img_metas, prev_bev):
+        # prev_bev: bs, bev_h * bev_w, c 1, 40000, 256
+        # Extract future BEV features.
+        # C1. Forward.
+        future_bev_feats_list = []
+        self.eval()
+        with torch.no_grad():
+            for i in range(self.future_pred_frame_num):
+                future_img_feats = self.extract_feat(img=future_img[i], img_metas=future_img_metas[i])
+                future_bev_feats = self.pts_bbox_head(future_img_feats, future_img_metas[i], prev_bev, only_bev=True)
+                future_bev_feats_list.append(future_bev_feats)
+                # 如果送进来的prev_bev是None,则prev_bev一直为None
+                prev_bev = future_bev_feats if prev_bev is not None else prev_bev
+        self.train()
+        return future_bev_feats_list
+
     def plan_with_reward(self, bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj):
         # 这里需要改成可以控制只使用imitation reward或者simulation reward或者两者都使用
         pose_pred, pose_loss, multi_traj, sim_rewards = self.plan_head(bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj, self.training_epoch)
@@ -496,6 +518,7 @@ class Drive_OccWorld(BEVFormer):
             reward_model_frame_idx = list(range(1, self.future_pred_frame_num + 1))
 
         # D2. Align previous frames to the reference coordinates.
+        # reference coordinates 是当前帧 prev_img_metas[num_frames-1] = img_metas
         ref_img_metas = [[each[num_frames-1]] for each in prev_img_metas]
         prev_img_metas = [[each[i] for i in range(num_frames-1)] for each in prev_img_metas]
         ref_to_history_list = self._get_history_ref_to_previous_transform(
@@ -588,7 +611,10 @@ class Drive_OccWorld(BEVFormer):
         # forward head
         next_bev_preds = future_pred_head.forward_head(next_bev_feats)
 
-        return next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss, next_im_rewards, next_sim_rewards
+        # D5. obtain future bev feat
+        future_bev_feats = torch.stack([each[-1] for each in next_bev_feats], 0)  # current frame + future frames, 40000, 256
+
+        return next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss, next_im_rewards, next_sim_rewards, future_bev_feats
 
 
     def compute_occ_loss(self, occ_preds, occ_gts):
@@ -768,6 +794,8 @@ class Drive_OccWorld(BEVFormer):
                       sample_traj=None,
                       # vel_sterring
                       vel_steering=None,
+                      future_img=None,
+                      future_img_metas=None,
                       ):
         """Forward training function.
         Args:
@@ -823,6 +851,7 @@ class Drive_OccWorld(BEVFormer):
 
 
         # C. Extract current BEV features.
+        # reference就是当前帧
         img = img[:, -1, ...]
         img_metas = [each[num_frames-1] for each in img_metas]
         if self.turn_on_plan:
@@ -877,15 +906,24 @@ class Drive_OccWorld(BEVFormer):
             # next_pose_preds bs,num_traj,2
             # action condition注意：轨迹点是当前帧的轨迹点，command是预测的下一帧的command，也就是未来bev特征是当前的轨迹点和下一帧要做的command(前行，左，右)
             # nuScenes 关键帧采样频率是2hz，所以每帧预测是0.5s的轨迹点
-            next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss, next_im_rewards, next_sim_rewards = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict, 
+            next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss, next_im_rewards, next_sim_rewards, pred_future_bev_feat = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict, 
                                                                             valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='occ')
 
 
             # D6. predict future flow in auto-regressive manner
             if self.turn_on_flow:
-                next_bev_preds_flow, _, _, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict, 
+                next_bev_preds_flow, _, _, _, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict, 
                                                                 valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='flow')
 
+
+            # D7. future bev feat
+            if self.loss_bev is not None and future_img_metas is not None and future_img is not None:
+                assert len(future_img) == len(future_img_metas) == 1, "only support bs=1 for now"
+                future_img_metas = [each.data for each in future_img_metas[0]][1:]
+                if self.use_ref_bev_for_future_bev:
+                    future_bev_feats = self.obtain_future_bev_feat(future_img[0][1:], future_img_metas, ref_bev)
+                else:
+                    future_bev_feats = self.obtain_future_bev_feat(future_img, future_img_metas, None)
 
         # E. Compute Loss
         losses = dict()
@@ -929,6 +967,11 @@ class Drive_OccWorld(BEVFormer):
             if len(next_sim_rewards) > 0 and self.use_sim_reward:
                 losses_reward = losses_reward + sum(next_sim_rewards) / len(next_sim_rewards) if losses_reward != 0 else sum(next_sim_rewards) / len(next_sim_rewards)
             losses.update(losses_reward=losses_reward * 0.1)
+
+        # E6. Compute loss for bev distillation
+        if self.loss_bev is not None:
+            losses_bev_distillation = self.loss_bev(pred_future_bev_feat, future_bev_feats.detach())
+            losses.update(losses_bev_distillation=losses_bev_distillation)
 
         return losses
 
@@ -993,12 +1036,12 @@ class Drive_OccWorld(BEVFormer):
         plan_dict = {'sem_occupancy': None, 'sample_traj': sample_traj, 'gt_traj': sdc_planning, 'ref_pose_pred': ref_pose_pred}
 
         # D5. predict future occ in auto-regressive manner
-        next_bev_preds, _, next_pose_preds, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict,
+        next_bev_preds, _, next_pose_preds, _, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict,
                                                                 valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='occ')
 
         # D6. predict future flow in auto-regressive manner
         if self.turn_on_flow:
-            next_bev_preds_flow, _, _, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict,
+            next_bev_preds_flow, _, _, _, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict,
                                                             valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='flow')
 
 

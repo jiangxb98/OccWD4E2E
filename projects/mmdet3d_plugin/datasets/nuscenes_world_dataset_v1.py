@@ -142,7 +142,7 @@ class NuScenesWorldDatasetV1(NuScenesWorldDatasetTemplate):
                 new_can_bus_pos = np.array([0, 0, 0, 1]).reshape(1, 4)
                 ref2prev_lidar_transform = ref2history_lidar_transform[-2]
                 cur2ref_lidar_transform = history2ref_lidar_transform[-1]
-                new_can_bus_pos = new_can_bus_pos @ cur2ref_lidar_transform @ ref2prev_lidar_transform
+                new_can_bus_pos = new_can_bus_pos @ cur2ref_lidar_transform @ ref2prev_lidar_transform  # 当前帧的原点在前一帧坐标系下的位置
                 new_can_bus_angle = new_can_bus[-1] - ref_can_bus[-1]
                 new_can_bus[:3] = new_can_bus_pos[:, :3]
                 new_can_bus[-1] = new_can_bus_angle
@@ -187,7 +187,7 @@ class NuScenesWorldDatasetV1(NuScenesWorldDatasetTemplate):
                 new_can_bus_pos = np.array([0, 0, 0, 1]).reshape(1, 4)
                 ref2prev_lidar_transform = ref2future_lidar_transform[-2]
                 cur2ref_lidar_transform = future2ref_lidar_transform[-1]
-                new_can_bus_pos = new_can_bus_pos @ cur2ref_lidar_transform @ ref2prev_lidar_transform
+                new_can_bus_pos = new_can_bus_pos @ cur2ref_lidar_transform @ ref2prev_lidar_transform # future_frame相对于前一帧的位置
 
                 new_can_bus_angle = new_can_bus[-1] - ref_can_bus[-1]
                 new_can_bus[:3] = new_can_bus_pos[:, :3]
@@ -235,7 +235,7 @@ class NuScenesWorldDatasetV1(NuScenesWorldDatasetTemplate):
         future_ego_pos = previous_queue[-1]['sdc_planning']
         future_ego_pos = np.concatenate([np.array([0.,0.,0.])[None], future_ego_pos], axis=0)
         future_ego_pos[:, 2] = future_ego_pos[:, 2] / 180 * np.pi
-        sdc_planning = future_ego_pos[1:] - future_ego_pos[:-1]  # 计算未来ego位置的相对变化
+        sdc_planning = future_ego_pos[1:] - future_ego_pos[:-1]  # 计算未来ego位置的相对变化，当前帧相对前一帧的变化
         sdc_planning_mask = previous_queue[-1]['sdc_planning_mask']
         command = previous_queue[-1]['command']
         # sdc_planning sdc_planning_mask command for planning
@@ -264,9 +264,18 @@ class NuScenesWorldDatasetV1(NuScenesWorldDatasetTemplate):
         # vel_steering
         vel = np.concatenate([ego_vx[:,None], ego_vy[:,None], ego_vw[:,None]], axis=-1)
         steering = vel_steering_list[:, -1][:,None]
-        ret_queue['vel_steering'] = np.concatenate([vel, steering], axis=-1)
+        ret_queue['vel_steering'] = np.concatenate([vel, steering], axis=-1)  # 包含：[x方向速度, y方向速度, 角速度, 转向角]
 
 
         if len(future_can_bus) < 1 + self.future_length:
             return None
+        
+        # by jiangxb
+        # 7. Prepare image inputs of history and current frames.
+        fut_imgs_list = [each['img'].data for each in future_queue]   # history_len*[imgs]
+        ret_queue['future_img'] = DC(torch.stack(fut_imgs_list), cpu_only=False, stack=True)
+
+        future_img_metas = [each['img_metas'] for each in future_queue]
+        ret_queue['future_img_metas'] = DC(future_img_metas, cpu_only=True)
+
         return ret_queue

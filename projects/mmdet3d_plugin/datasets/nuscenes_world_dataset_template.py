@@ -31,7 +31,7 @@ class NuScenesWorldDatasetTemplate(CustomNuScenesDataset):
                  load_frame_interval=None,
                  rand_frame_interval=(1,),
                  plan_grid_conf=None,
-
+                 future_aug=False,
                  *args,
                  **kwargs):
         """
@@ -52,6 +52,9 @@ class NuScenesWorldDatasetTemplate(CustomNuScenesDataset):
         # load origin nusc dataset for instance annotation
         self.nusc = NuScenes(version='v1.0-trainval', dataroot=self.data_root, verbose=False)
         self.nusc_can = NuScenesCanBus(dataroot=self.data_root)
+
+        # by jiangxb
+        self.future_aug = future_aug
 
         # scene2map
         self.scene2map = {}
@@ -533,7 +536,12 @@ class NuScenesWorldDatasetTemplate(CustomNuScenesDataset):
 
             occ_load_flag = False
 
-            example = self._prepare_data_info_single(idx, occ_load_flag)
+            if self.future_aug:
+                example = self._prepare_data_info_single(idx, occ_load_flag)
+            else:
+                # by jiangxb
+                example = self._prepare_data_info_single(idx, occ_load_flag, aug_param=aug_param)
+
             if example is None and not has_future:
                 return None
             future_queue.append(example)
