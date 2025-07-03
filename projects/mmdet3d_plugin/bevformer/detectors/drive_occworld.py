@@ -921,9 +921,12 @@ class Drive_OccWorld(BEVFormer):
                 assert len(future_img) == len(future_img_metas) == 1, "only support bs=1 for now"
                 future_img_metas = [each.data for each in future_img_metas[0]][1:]
                 if self.use_ref_bev_for_future_bev:
+                    # 需要更新对应的can_bus
+                    for i in range(len(future_img_metas)):
+                        future_img_metas[i]['can_bus'] = img_metas[0]['future_can_bus'][i+1]
                     future_bev_feats = self.obtain_future_bev_feat(future_img[0][1:], future_img_metas, ref_bev)
                 else:
-                    future_bev_feats = self.obtain_future_bev_feat(future_img, future_img_metas, None)
+                    future_bev_feats = self.obtain_future_bev_feat(future_img[0][1:], [future_img_metas], None)
 
         # E. Compute Loss
         losses = dict()

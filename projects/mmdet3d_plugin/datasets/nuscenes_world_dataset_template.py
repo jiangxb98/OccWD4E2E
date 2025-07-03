@@ -537,10 +537,10 @@ class NuScenesWorldDatasetTemplate(CustomNuScenesDataset):
             occ_load_flag = False
 
             if self.future_aug:
-                example = self._prepare_data_info_single(idx, occ_load_flag)
+                example = self._prepare_data_info_single(idx, occ_load_flag, aug_param=aug_param)
             else:
                 # by jiangxb
-                example = self._prepare_data_info_single(idx, occ_load_flag, aug_param=aug_param)
+                example = self._prepare_data_info_single(idx, occ_load_flag)
 
             if example is None and not has_future:
                 return None
