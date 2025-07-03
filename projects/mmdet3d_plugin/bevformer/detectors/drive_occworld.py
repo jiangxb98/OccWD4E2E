@@ -380,13 +380,13 @@ class Drive_OccWorld(BEVFormer):
         self.eval()
         with torch.no_grad():
             for i in range(self.future_pred_frame_num):
-                future_img_feats = self.extract_feat(img=future_img[i], img_metas=future_img_metas[i])
+                future_img_feats = self.extract_feat(img=future_img[i].unsqueeze(0), img_metas=future_img_metas[i])
                 future_bev_feats = self.pts_bbox_head(future_img_feats, future_img_metas[i], prev_bev, only_bev=True)
                 future_bev_feats_list.append(future_bev_feats)
                 # 如果送进来的prev_bev是None,则prev_bev一直为None
                 prev_bev = future_bev_feats if prev_bev is not None else prev_bev
         self.train()
-        return future_bev_feats_list
+        return torch.cat(future_bev_feats_list)
 
     def plan_with_reward(self, bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj):
         # 这里需要改成可以控制只使用imitation reward或者simulation reward或者两者都使用
@@ -919,13 +919,13 @@ class Drive_OccWorld(BEVFormer):
             # D7. future bev feat
             if self.loss_bev is not None and future_img_metas is not None and future_img is not None:
                 assert len(future_img) == len(future_img_metas) == 1, "only support bs=1 for now"
-                future_img_metas = [each.data for each in future_img_metas[0]][1:]
+                future_img_metas = [[each.data] for each in future_img_metas[0]][1:]
+                # 需要更新对应的can_bus
+                for i in range(len(future_img_metas)):
+                    future_img_metas[i][0]['can_bus'] = img_metas[0]['future_can_bus'][i+1]
+                    future_img_metas[i][0]['aug_param'] = img_metas[0]['aug_param']
                 if self.use_ref_bev_for_future_bev:
-                    # 需要更新对应的can_bus
-                    for i in range(len(future_img_metas)):
-                        future_img_metas[i]['can_bus'] = img_metas[0]['future_can_bus'][i+1]
-                        future_img_metas[i]['aug_param'] = img_metas[0]['aug_param']
-                    future_bev_feats = self.obtain_future_bev_feat(future_img[0][1:], [future_img_metas], ref_bev)
+                    future_bev_feats = self.obtain_future_bev_feat(future_img[0][1:], [future_img_metas], ref_bev)  # 5, 40000, 256
                 else:
                     future_bev_feats = self.obtain_future_bev_feat(future_img[0][1:], [future_img_metas], None)
 
@@ -974,6 +974,7 @@ class Drive_OccWorld(BEVFormer):
 
         # E6. Compute loss for bev distillation
         if self.loss_bev is not None:
+            pred_future_bev_feat = pred_future_bev_feat.squeeze(1)[1:]
             losses_bev_distillation = self.loss_bev(pred_future_bev_feat, future_bev_feats.detach())
             losses.update(losses_bev_distillation=losses_bev_distillation)
 
