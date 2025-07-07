@@ -32,6 +32,7 @@ class NuScenesWorldDatasetTemplate(CustomNuScenesDataset):
                  rand_frame_interval=(1,),
                  plan_grid_conf=None,
                  future_aug=False,
+                 load_future_img=False,
                  *args,
                  **kwargs):
         """
@@ -55,7 +56,7 @@ class NuScenesWorldDatasetTemplate(CustomNuScenesDataset):
 
         # by jiangxb
         self.future_aug = future_aug
-
+        self.load_future_img = load_future_img
         # scene2map
         self.scene2map = {}
         for sce in self.nusc.scene:

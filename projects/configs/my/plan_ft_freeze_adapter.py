@@ -87,6 +87,7 @@ pred_height = 16
 
 
 freeze_model_name = ['img_backbone', 'img_neck', 'future_pred_head', 'pts_bbox_head']
+unfreeze_model_name = ['future_pred_head.bev_adapter']
 use_ref_bev_for_future_bev = False
 
 model = dict(
@@ -99,6 +100,7 @@ model = dict(
     only_generate_dataset=only_generate_dataset,
     supervise_all_future=supervise_all_future,
     freeze_model_name=freeze_model_name,
+    unfreeze_model_name=unfreeze_model_name,
     # BEV configuration.
     point_cloud_range=point_cloud_range,
     bev_h=bev_h_,
@@ -108,8 +110,8 @@ model = dict(
     future_pred_frame_num=future_pred_frame_num_train,
     test_future_frame_num=future_pred_frame_num_test,
     
-    # loss
-    loss_bev=dict(type='MSELoss', loss_weight=1.0),
+    # loss for bev distillation
+    loss_bev=None,
     use_ref_bev_for_future_bev=use_ref_bev_for_future_bev,
 
     img_backbone=dict(
@@ -139,6 +141,8 @@ model = dict(
         soft_weight=False,
         turn_on_flow=False, # Occ Head
         obj_motion_norm=False,
+        with_adapter=True,    # adapter for the fine-tune
+        adapter_cfg={'reduction': 8, 'n_blocks': 2},
         pred_history_frame_num=world_head_pred_history_frame_num,
         pred_future_frame_num=world_head_pred_future_frame_num,
         per_frame_loss_weight=world_head_per_frame_loss_weight,
@@ -386,7 +390,7 @@ train_pipeline = [
     dict(type='DefaultFormatBundle3D', class_names=class_names),
     dict(type='CustomCollect3D', keys=['img', 'aug_param', 'gt_occ', 'vel_steering',
                                        'sdc_planning', 'sdc_planning_mask', 'command', 'sample_traj', 'gt_future_boxes',
-                                       'future_img', 'future_img_metas'])
+                                       ])
 ]
 
 test_pipeline = [
@@ -421,7 +425,8 @@ data = dict(
         ego_mask=(-0.8, -1.5, 0.8, 2.5),
         load_frame_interval=load_frame_interval,
         plan_grid_conf=plan_grid_conf,
-        future_aug=True,  # 对未来的img进行数据增强
+        future_aug=False,  # 对未来的img进行数据增强
+        load_future_img=False,
         # we use box_type_3d='LiDAR' in kitti and nuscenes dataset
         # and box_type_3d='Depth' in sunrgbd and scannet dataset.
         box_type_3d='LiDAR'),

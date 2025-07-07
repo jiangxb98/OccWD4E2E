@@ -182,6 +182,7 @@ class PlanHead_v1(BaseModule):
                  plan_traj_for_sim_reward_epoch=999999,
                  use_gt_occ_for_sim_reward=False,
                  random_select=False,
+                 sim_reward_nums=1,
                  *args,
                  **kwargs):
 
@@ -197,6 +198,7 @@ class PlanHead_v1(BaseModule):
         self.plan_traj_for_sim_reward_epoch = plan_traj_for_sim_reward_epoch
         self.random_select = random_select
         self.use_gt_occ_for_sim_reward = use_gt_occ_for_sim_reward
+        self.sim_reward_nums = sim_reward_nums
         # cls
         self.instance_cls = torch.tensor(instance_cls, requires_grad=False)  # 'bicycle', 'bus', 'car', 'construction', 'motorcycle', 'pedestrian', 'trailer', 'truck'
         self.drivable_area_cls = torch.tensor(drivable_area_cls, requires_grad=False)  # 'drivable_area'

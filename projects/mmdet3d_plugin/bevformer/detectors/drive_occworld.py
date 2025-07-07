@@ -71,6 +71,7 @@ class Drive_OccWorld(BEVFormer):
                  use_reward_model=False,  # for imitation reward
                  reward_model=None,
                  freeze_model_name=None,
+                 unfreeze_model_name=None,
                  future_reward_model_frame_idx=None,
                  random_select_reward_model_frame=False,
                  use_sim_reward=False,  # for simulation reward
@@ -191,6 +192,9 @@ class Drive_OccWorld(BEVFormer):
         self.freeze_model_name = freeze_model_name
         if freeze_model_name is not None:
             self.freeze_model(freeze_model_name)
+        self.unfreeze_model_name = unfreeze_model_name
+        if unfreeze_model_name is not None:
+            self.unfreeze_model(unfreeze_model_name)
 
 
     def freeze_model(self, model_name_list):
@@ -198,6 +202,14 @@ class Drive_OccWorld(BEVFormer):
             for model_name in model_name_list:
                 if model_name in name:
                     param.requires_grad = False
+                    break
+
+    def unfreeze_model(self, model_name_list):
+        for name, param in self.named_parameters():
+            for model_name in model_name_list:
+                # if bev_adapter in name
+                if model_name in name:
+                    param.requires_grad = True
                     break
 
     def set_epoch(self, epoch):
@@ -904,7 +916,7 @@ class Drive_OccWorld(BEVFormer):
 
             # D5. predict future occ in auto-regressive manner
             # next_pose_preds bs,num_traj,2
-            # action condition注意：轨迹点是当前帧的轨迹点，command是预测的下一帧的command，也就是未来bev特征是当前的轨迹点和下一帧要做的command(前行，左，右)
+            # action condition注意：轨迹点是当前帧(current)预测的下一帧自车位置（也就是轨迹点），command是预测的下一帧(next)的command，也就是未来bev特征是当前帧预测的轨迹点和下一帧要做的command(前行，左，右)
             # nuScenes 关键帧采样频率是2hz，所以每帧预测是0.5s的轨迹点
             next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss, next_im_rewards, next_sim_rewards, pred_future_bev_feat = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict, 
                                                                             valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='occ')
@@ -925,9 +937,9 @@ class Drive_OccWorld(BEVFormer):
                     future_img_metas[i][0]['can_bus'] = img_metas[0]['future_can_bus'][i+1]
                     future_img_metas[i][0]['aug_param'] = img_metas[0]['aug_param']
                 if self.use_ref_bev_for_future_bev:
-                    future_bev_feats = self.obtain_future_bev_feat(future_img[0][1:], [future_img_metas], ref_bev)  # 5, 40000, 256
+                    future_bev_feats = self.obtain_future_bev_feat(future_img[0][1:], future_img_metas, ref_bev)  # 5, 40000, 256
                 else:
-                    future_bev_feats = self.obtain_future_bev_feat(future_img[0][1:], [future_img_metas], None)
+                    future_bev_feats = self.obtain_future_bev_feat(future_img[0][1:], future_img_metas, None)
 
         # E. Compute Loss
         losses = dict()

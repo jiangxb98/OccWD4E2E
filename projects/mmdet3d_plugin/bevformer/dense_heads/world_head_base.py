@@ -13,6 +13,8 @@ from mmcv.runner.base_module import BaseModule
 from mmcv.runner import force_fp32, auto_fp16
 from mmcv.cnn import xavier_init
 from torch.nn.init import normal_
+
+from projects.mmdet3d_plugin.bevformer.modules.adapter import FutureBEVAdapter
 from ..utils import e2e_predictor_utils
 from mmdet3d.models import builder
 from einops import rearrange, repeat
@@ -116,6 +118,11 @@ class WorldHeadTemplate(BaseModule):
 
                  # evaluation configuration.
                  eval_within_grid=False,
+
+                 # adapter
+                 with_adapter=False,
+                 adapter_cfg={'reduction': 8, 'n_blocks': 2},
+
                  **kwargs):
 
         # BEV configuration of reference frame.
@@ -192,6 +199,12 @@ class WorldHeadTemplate(BaseModule):
             positional_encoding)
         self.transformer = build_transformer(transformer)
         self.embed_dims = self.transformer.embed_dims
+
+        # adapter
+        self.with_adapter = with_adapter
+        if with_adapter:
+            self.bev_adapter = FutureBEVAdapter(self.embed_dims, **adapter_cfg)
+
 
         # set loss weight.
         self.loss_weight = np.array(loss_weight)
@@ -450,6 +463,11 @@ class WorldHeadTemplate(BaseModule):
         next_bev_feat, bev_sem_pred = self._get_next_bev_features(
             prev_feats, img_metas, target_frame_index, action_condition_dict, 
             cond_norm_dict, tgt_points, ref_points, bev_h, bev_w)
+        
+        # adapter
+        if self.with_adapter:
+            next_bev_feat = self.bev_adapter(next_bev_feat)
+
         return next_bev_feat, bev_sem_pred
 
     def forward_head(self, next_bev_feats):

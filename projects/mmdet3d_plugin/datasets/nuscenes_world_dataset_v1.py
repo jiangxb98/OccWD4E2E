@@ -273,10 +273,11 @@ class NuScenesWorldDatasetV1(NuScenesWorldDatasetTemplate):
         
         # by jiangxb
         # 7. Prepare image inputs of history and current frames.
-        fut_imgs_list = [each['img'].data for each in future_queue]   # history_len*[imgs]
-        ret_queue['future_img'] = DC(torch.stack(fut_imgs_list), cpu_only=False, stack=True)
+        if self.load_future_img:
+            fut_imgs_list = [each['img'].data for each in future_queue]   # history_len*[imgs]
+            ret_queue['future_img'] = DC(torch.stack(fut_imgs_list), cpu_only=False, stack=True)
 
-        future_img_metas = [each['img_metas'] for each in future_queue]
-        ret_queue['future_img_metas'] = DC(future_img_metas, cpu_only=True)
+            future_img_metas = [each['img_metas'] for each in future_queue]
+            ret_queue['future_img_metas'] = DC(future_img_metas, cpu_only=True)
 
         return ret_queue
