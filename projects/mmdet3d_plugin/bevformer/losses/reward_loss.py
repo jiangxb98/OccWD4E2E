@@ -56,6 +56,8 @@ def compute_sim_reward_loss(
         target_rewards = sim_reward[:, -1] # the last frame
     else:
         target_rewards = sim_reward
+    
+    assert sim_reward.shape == predicted_rewards.shape, f'sim_reward.shape: {sim_reward.shape}, predicted_rewards.shape: {predicted_rewards.shape}'
 
     # Compute loss using binary cross-entropy # 5 is the number of metrics
     sim_reward_loss = -torch.mean(

@@ -403,7 +403,7 @@ class Drive_OccWorld(BEVFormer):
     def plan_with_reward(self, bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj):
         # 这里需要改成可以控制只使用imitation reward或者simulation reward或者两者都使用
         pose_pred, pose_loss, multi_traj, sim_rewards = self.plan_head(bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj, self.training_epoch)
-        im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(bev, pose_pred)
+        im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(bev, pose_pred)  # simtraj_rewards shape: B*self.sim_reward_nums, sample_num
         # 将sim_rewards和sim_traj_rewards转换为0-1之间的值
         # sim_rewards = sim_rewards.sigmoid() if sim_rewards is not None else None
         sim_traj_rewards = sim_traj_rewards.sigmoid() if sim_traj_rewards is not None else None
@@ -444,7 +444,7 @@ class Drive_OccWorld(BEVFormer):
             if im_traj_rewards is not None:
                 all_rewards = all_rewards + im_traj_rewards
             if sim_traj_rewards is not None:
-                all_rewards = all_rewards + sim_traj_rewards
+                all_rewards = all_rewards + sim_traj_rewards.mean(dim=0)
             max_reward_idx = all_rewards.argmax()
             pose_pred = pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
             im_reward_loss = None

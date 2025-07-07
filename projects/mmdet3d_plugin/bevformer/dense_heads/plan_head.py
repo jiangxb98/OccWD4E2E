@@ -337,19 +337,22 @@ class PlanHead_v1(BaseModule):
         if gt_trajs.ndim == 2:
             gt_trajs = gt_trajs[:, None]
 
-        # if self.use_gt_occ_for_sim_reward and self.training:
-        #     # 训练阶段可以使用GT的occupancy来计算sim reward
-        #     cost = self.cost_function.forward_sim(gt_trajs[:,:,:2], instance_occupancy, drivable_area)
-        # else:
-        cost = self.cost_function.forward_sim(trajs[:,:,:2], instance_occupancy, drivable_area)
+        cost = self.cost_function.forward_sim(trajs[:,:,:2], instance_occupancy, drivable_area, self.sim_reward_nums)
 
-        # cost=0表示没有碰撞
-        pos_mask = cost <= 0
-        neg_mask = cost > 0
-        
-        cost[pos_mask] = 1
-        cost[neg_mask] = 0
+        if self.sim_reward_nums == 1:
+            cost = cost
+        elif self.sim_reward_nums == 3:
+            for i in range(self.sim_reward_nums):
+                # cost=0表示没有碰撞
+                pos_mask = cost[i] <= 0
+                neg_mask = cost[i] > 0
+                
+                cost[i][pos_mask] = 1
+                cost[i][neg_mask] = 0
 
+                cost = torch.cat(cost, dim=0)  # shape: B*self.sim_reward_nums, sample_traj_nums
+        else:
+            raise ValueError(f'sim_reward_nums must be 1 or 3, but got {self.sim_reward_nums}')
         return cost
     
     def select(self, trajs, cost_volume, instance_occupancy, drivable_area, k=1):
