@@ -429,11 +429,11 @@ class Drive_OccWorld(BEVFormer):
                 max_reward_idx = all_rewards.argmax()
                 pose_pred = pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
             elif self.use_sim_reward and not self.use_im_reward and sim_rewards is not None:
-                all_rewards = sim_rewards
+                all_rewards = sim_rewards.mean(dim=0).unsqueeze(0)
                 max_reward_idx = all_rewards.argmax()
                 pose_pred = pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
             elif self.use_im_reward and self.use_sim_reward and im_traj_rewards is not None and sim_rewards is not None:
-                all_rewards = im_reward_targets + sim_rewards
+                all_rewards = im_reward_targets + sim_rewards.mean(dim=0).unsqueeze(0)
                 max_reward_idx = all_rewards.argmax()
                 pose_pred = pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
             else:
@@ -587,8 +587,8 @@ class Drive_OccWorld(BEVFormer):
                         sem_occupancy_i = sem_occupancy_i.view(bs, self.bev_w, self.bev_h, d).transpose(1,2)
                     else:   # use_gt  traning_epoch < 12
                         sem_occupancy_i = plan_dict['sem_occupancy'][:,future_frame_index]
-                    # pose_pred, pose_loss = self.plan_head(pred_feat[-1], sample_traj_i, sem_occupancy_i, command_i, gt_traj_i)
                     
+                    # 20250708: pred_feat这里应该是3个的，送入plan_head只送入了一个，有点问题，那我蒸馏的时候咋蒸馏呢？蒸馏最后一层吧，先这样对齐
                     if self.use_reward_model and future_frame_index in reward_model_frame_idx:
                         pose_pred, pose_loss, im_reward_loss, sim_reward_loss = self.plan_with_reward(pred_feat[-1], sample_traj_i, sem_occupancy_i, command_i, gt_traj_i, True)
                     else:

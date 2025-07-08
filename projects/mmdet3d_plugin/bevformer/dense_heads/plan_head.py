@@ -350,7 +350,7 @@ class PlanHead_v1(BaseModule):
                 cost[i][pos_mask] = 1
                 cost[i][neg_mask] = 0
 
-                cost = torch.cat(cost, dim=0)  # shape: B*self.sim_reward_nums, sample_traj_nums
+            cost = torch.cat(cost, dim=0)  # shape: B*self.sim_reward_nums, sample_traj_nums  eg. (3, 20)
         else:
             raise ValueError(f'sim_reward_nums must be 1 or 3, but got {self.sim_reward_nums}')
         return cost

@@ -1,27 +1,34 @@
 import torch.nn as nn
 
 class FutureBEVAdapter(nn.Module):
-    def __init__(self, in_channels, n_blocks=2, reduction=8):
+    def __init__(self, 
+                 in_channels, 
+                 n_blocks=2, 
+                 reduction=8,
+                 bev_h=200,
+                 bev_w=200):
         super().__init__()
+        self.bev_h = bev_h
+        self.bev_w = bev_w
         self.blocks = nn.ModuleList()
         for _ in range(n_blocks):
             block = nn.Sequential(
                 # 普通3x3卷积
-                nn.Conv2d(in_channels, in_channels, 3, padding=1),
-                nn.BatchNorm2d(in_channels),
+                nn.Conv2d(in_channels, in_channels//2, 3, padding=1),
                 nn.ReLU(inplace=True),
                 # 1x1卷积整合特征
-                nn.Conv2d(in_channels, in_channels, 1),
-                nn.BatchNorm2d(in_channels),
+                nn.Conv2d(in_channels//2, in_channels, 1),
                 # SE注意力做通道调整
                 SELayer(in_channels, reduction=reduction)
             )
             self.blocks.append(block)
             
     def forward(self, x):
-        identity = x
+        inter_num, bs, hw, c = x.shape
+        x = x.reshape(inter_num*bs, self.bev_h, self.bev_w, c).permute(0, 3, 1, 2)
         for block in self.blocks:
             x = block(x) + x
+        x = x.permute(0, 2, 3, 1).reshape(inter_num, bs, hw, c)
         return x
 
 class SELayer(nn.Module):
