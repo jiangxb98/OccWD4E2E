@@ -183,6 +183,7 @@ class PlanHead_v1(BaseModule):
                  use_gt_occ_for_sim_reward=False,
                  random_select=False,
                  sim_reward_nums=1,
+                 convert_bs_mode=False, # 在计算多模轨迹时，是否需要转换为bs模式
                  *args,
                  **kwargs):
 
@@ -199,6 +200,7 @@ class PlanHead_v1(BaseModule):
         self.random_select = random_select
         self.use_gt_occ_for_sim_reward = use_gt_occ_for_sim_reward
         self.sim_reward_nums = sim_reward_nums
+        self.convert_bs_mode = convert_bs_mode
         # cls
         self.instance_cls = torch.tensor(instance_cls, requires_grad=False)  # 'bicycle', 'bus', 'car', 'construction', 'motorcycle', 'pedestrian', 'trailer', 'truck'
         self.drivable_area_cls = torch.tensor(drivable_area_cls, requires_grad=False)  # 'drivable_area'
@@ -458,6 +460,194 @@ class PlanHead_v1(BaseModule):
 
             # select_traj -> encoder
             select_traj = self.pose_encoder(select_traj_.float())   # B,1,C
+            if self.convert_bs_mode:
+                select_traj = select_traj.permute(1, 0, 2)  # 6，b, c
+
+            # bev refine
+            bs = bev_feats.shape[0]
+            dtype = bev_feats.dtype
+            bev_feats = rearrange(bev_feats, 'b c h w -> b (w h) c')
+
+            # # 1. plan_query
+            plan_query = self.plan_embedding.weight.to(dtype)
+            if plan_query.shape[0] == self.sample_traj_nums:
+                if self.convert_bs_mode:
+                    plan_query = plan_query[:, None].repeat(1, self.sample_traj_nums, 1)  # sample_traj_nums,1,C
+                else:
+                    plan_query = plan_query[None]  #  1,sample_traj_nums,C
+            else:
+                if self.convert_bs_mode:
+                    plan_query = plan_query[None].repeat(self.sample_traj_nums, 1, 1)
+                else:
+                    plan_query = plan_query[None].repeat(1, self.sample_traj_nums, 1)
+            # navi_embed
+            navi_embed = self.navi_embedding.weight[command]
+            if self.convert_bs_mode:
+                navi_embed = navi_embed[None].repeat(self.sample_traj_nums, 1, 1)
+            else:
+                navi_embed = navi_embed[None].repeat(1, self.sample_traj_nums, 1)
+            # mlp_fuser
+            plan_query = torch.cat([plan_query, navi_embed], dim=-1)
+            plan_query = self.mlp_fuser(plan_query)
+
+            # 3. bev_feats
+            bev_mask = torch.zeros((bs, self.bev_h, self.bev_w),
+                                device=plan_query.device).to(dtype)
+            bev_pos = self.positional_encoding(bev_mask).to(dtype)  # bs, bev_dims, bev_h, bev_w
+
+            # 5. do transformer layers to get pose features.
+            if self.convert_bs_mode:
+                plan_query = self.transformer(
+                    plan_query,
+                    bev_feats.expand(self.sample_traj_nums, *bev_feats.shape[1:]),
+                    prev_pose=select_traj,
+                    bev_pos=bev_pos.expand(self.sample_traj_nums, *bev_pos.shape[1:]),
+                )
+                plan_query = plan_query.permute(1, 0, 2)
+            else:
+                plan_query = self.transformer(
+                    plan_query,
+                    bev_feats,
+                    prev_pose=select_traj,
+                    bev_pos=bev_pos,
+                )
+            # for list
+            # plan_query_list = []
+            # for j in range(self.sample_traj_nums):
+            #     plan_query_ = self.transformer(
+            #         plan_query,
+            #         bev_feats,
+            #         prev_pose=select_traj[:,:,j],
+            #         bev_pos=bev_pos.repeat(self.sample_traj_nums, 1, 1, 1),
+            #     )
+            #     plan_query_list.append(plan_query_)
+            # plan_query = torch.cat(plan_query_list, dim=1)  # bs, traj_nums, C
+
+            # 6. plan regression
+            bs, _, _ = plan_query.shape
+            next_pose = self.reg_branch(plan_query).view((-1, self.planning_steps, 2))   # B*traj_nums,mode=1,2
+
+            # 计算sim_rewards
+            sim_rewards = None
+            if self.use_sim_reward and self.training:
+                if training_epoch < self.plan_traj_for_sim_reward_epoch:
+                    # 使用初始化的多模轨迹来计算sim_reward
+                    sim_rewards = self.cal_sim_reward(select_traj_, gt_trajs, None, instance_occupancy, drivable_area)
+                else:
+                    # 使用预测的多模轨迹来计算sim_reward（加这个的原因是，尝试用预测的结果来计算sim_reward）
+                    sim_rewards = self.cal_sim_reward(next_pose.detach().clone().transpose(1, 0), gt_trajs, None, instance_occupancy, drivable_area)
+
+            return next_pose, loss, select_traj_.to(torch.float32), sim_rewards
+        else:
+            # select_traj
+            select_traj = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area)  # B,3
+            # select_traj -> encoder
+            select_traj = self.pose_encoder(select_traj.float()).unsqueeze(1)   # B,1,C
+
+            # bev refine
+            bs = bev_feats.shape[0]
+            dtype = bev_feats.dtype
+            bev_feats = rearrange(bev_feats, 'b c h w -> b (w h) c')
+
+            # 1. plan_query
+            plan_query = self.plan_embedding.weight.to(dtype)
+            plan_query = plan_query[None]
+            # 当使用多个plan_query时，取平均
+            if plan_query.shape[1] > 1:
+                if self.plan_query_mode == 'first':
+                    plan_query = plan_query[:, 0, :][:, None]
+                elif self.plan_query_mode == 'mean':
+                    plan_query = plan_query.mean(1)[:, None]
+                elif self.plan_query_mode == 'max':
+                    plan_query = plan_query.max(1)[:, None]
+                elif self.plan_query_mode == 'min':
+                    plan_query = plan_query.min(1)[:, None]
+            
+            # navi_embed
+            navi_embed = self.navi_embedding.weight[command]
+            navi_embed = navi_embed[None]
+            # mlp_fuser
+            plan_query = torch.cat([plan_query, navi_embed], dim=-1)
+            plan_query = self.mlp_fuser(plan_query)
+
+            # 3. bev_feats
+            bev_mask = torch.zeros((bs, self.bev_h, self.bev_w),
+                                device=plan_query.device).to(dtype)
+            bev_pos = self.positional_encoding(bev_mask).to(dtype)  # bs, bev_dims, bev_h, bev_w
+
+            # 5. do transformer layers to get pose features.
+            plan_query = self.transformer(
+                plan_query,
+                bev_feats,
+                prev_pose=select_traj,
+                bev_pos=bev_pos,
+            )
+            
+            # 6. plan regression
+            next_pose = self.reg_branch(plan_query).view((-1, self.planning_steps, 2))   # B,mode=1,2
+            return next_pose, loss
+
+    @auto_fp16(apply_to=('bev_feats'))
+    def forward_bak(self, bev_feats, trajs, sem_occupancy, command, gt_trajs=None, multi_traj=False, training_epoch=0):
+        """ Forward function for each frame.
+
+        Args:
+            bev_feats: bev feats of current frame, with shape of (bs, bev_h * bev_w, embed_dim)
+            trajs:    bs, sample_num, 3     current -> next frmae, under ref_lidar
+            gt_trajs: bs, 2                 current -> next frame, under ref_lidar
+            sem_occ:  bs, H,W,D             semantic occupancy
+            command: bs                    0:Right  1:Left  2:Forward
+            gt_trajs: bs, 3                 current -> next frame, under ref_liar
+        """
+        cur_trajs = []
+        # 根据导航命令选择相应的轨迹子集, 这个command就是gt信息吧，导航信息算是gt吗？
+        for i in range(len(command)):
+            command_i = command[i]
+            traj = trajs[i]
+            # 根据导航命令选择相应的轨迹子集
+            if command_i == 1:    # Left
+                cur_trajs.append(traj[:self.num].repeat(3, 1))
+            elif command_i == 2:  # Forward
+                cur_trajs.append(traj[self.num:self.num * 2].repeat(3, 1))
+            elif command_i == 0:  # Right
+                cur_trajs.append(traj[self.num * 2:].repeat(3, 1))
+            else:
+                cur_trajs.append(traj)
+        cur_trajs = torch.stack(cur_trajs)  # B,N_sample,3
+
+        # bev_feat
+        # grid sample
+        bev_feats = rearrange(bev_feats, 'b (w h) c -> b c h w', h=self.bev_h, w=self.bev_w)
+        bev_feats = self.bev_sampler(bev_feats)
+        # plugin adapter
+        if self.with_adapter:
+            bev_feats = bev_feats + self.bev_adapter(bev_feats)  # residual connection
+
+        # cost_volume
+        # 通过costvolume_head计算成本体积，表示每个位置的成本
+        costvolume = self.costvolume_head(bev_feats).squeeze(1) # b,h,w
+        # instance_occupancy
+        instance_occupancy = torch.isin(sem_occupancy, self.instance_cls.to(sem_occupancy)).float()
+        instance_occupancy = instance_occupancy.max(-1)[0].detach()  # b,h,w
+        # drivable_area
+        drivable_area = torch.isin(sem_occupancy, self.drivable_area_cls.to(sem_occupancy)).float()
+        drivable_area = drivable_area.max(-1)[0].detach()   # b,h,w
+
+        if self.training:
+            loss = self.loss_cost(cur_trajs, gt_trajs, costvolume, instance_occupancy, drivable_area)
+        else:
+            loss = None
+
+        if self.output_multi_traj and multi_traj:
+            # 去掉多余的重复轨迹用来计算sim_reward
+            cur_trajs = cur_trajs[:, :self.num, :]
+            # 1. select_traj
+            select_traj_ = self.select_multi_traj(cur_trajs, costvolume, instance_occupancy, drivable_area, self.sample_traj_nums, self.random_select)  # B,num_traj,3
+            # 2. random select traj_nums from cur_trajs
+            # select_traj_ = cur_trajs[torch.randperm(cur_trajs.shape[1])[:, :self.sample_traj_nums]]
+
+            # select_traj -> encoder
+            select_traj = self.pose_encoder(select_traj_.float())   # B,1,C
             select_traj = select_traj.permute(1, 0, 2)
 
             # bev refine
@@ -590,6 +780,9 @@ class PlanHead_v2(BaseModule):
                  loss_planning=None,
                  loss_collision=None,
 
+                 planning_steps=1,
+                 multi_planning_query=True,
+
                  *args,
                  **kwargs):
 
@@ -601,6 +794,9 @@ class PlanHead_v2(BaseModule):
             'zbound': [-10.0, 10.0, 20.0],
         }
         self.bev_sampler =  BevFeatureSlicer(bevformer_bev_conf, plan_grid_conf)
+
+
+        self.multi_planning_query = multi_planning_query
 
         # TODO: reimplement it with down-scaled feature_map
         self.embed_dims = transformer.embed_dims
@@ -624,11 +820,15 @@ class PlanHead_v2(BaseModule):
         self.transformer = build_transformer(transformer)
 
         # build decoder
-        self.planning_steps = 1
+        self.planning_steps = planning_steps
+        if self.multi_planning_query:
+            output_planning_steps = 1
+        else:
+            output_planning_steps = self.planning_steps
         self.reg_branch = nn.Sequential(
             nn.Linear(self.embed_dims, self.embed_dims),
             nn.ReLU(),
-            nn.Linear(self.embed_dims, self.planning_steps * 2),
+            nn.Linear(self.embed_dims, output_planning_steps * 2),
         )
 
         # loss
@@ -643,7 +843,7 @@ class PlanHead_v2(BaseModule):
     def _init_layers(self):
         """Initialize BEV prediction head."""
         # plan query for the next frame.
-        self.plan_embedding = nn.Embedding(1, self.embed_dims)
+        self.plan_embedding = nn.Embedding(self.planning_steps, self.embed_dims)
         # navi embed.
         self.navi_embedding = nn.Embedding(3, self.embed_dims)
         # mlp_fuser
@@ -704,10 +904,14 @@ class PlanHead_v2(BaseModule):
         # # 1. plan_query
         # plan_query = select_traj
         plan_query = self.plan_embedding.weight.to(dtype)
-        plan_query = plan_query[None]
+        plan_query = plan_query[None]  # 1,6,C
         # navi_embed
         navi_embed = self.navi_embedding.weight[command]
-        navi_embed = navi_embed[None]
+        navi_embed = navi_embed[None]  # 1,1,C
+
+        if self.multi_planning_query and self.planning_steps > 1:
+            navi_embed = navi_embed[None].repeat(1, self.planning_steps, 1)
+
         # mlp_fuser
         plan_query = torch.cat([plan_query, navi_embed], dim=-1)
         plan_query = self.mlp_fuser(plan_query)

@@ -605,7 +605,8 @@ class Drive_OccWorld(BEVFormer):
                 elif 'v2' in self.plan_head_type:   # used for inflated_GMO when sem_occupancy does not distinguish categories in GMO
                     pose_pred = self.plan_head(pred_feat[-1], command_i)
                     next_pose_preds = torch.cat([next_pose_preds, pose_pred], dim=1)
-
+                    im_reward_loss = None
+                    sim_reward_loss = None
 
             # 4. update pred_feat to prev_bev_input and update ref_to_history_list.
             prev_bev_input = torch.cat([prev_bev_input, pred_feat[-1].unsqueeze(1)], 1)
