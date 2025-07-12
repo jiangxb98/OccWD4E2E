@@ -780,7 +780,7 @@ class PlanHead_v2(BaseModule):
                  loss_planning=None,
                  loss_collision=None,
 
-                 planning_steps=1,
+                 planning_steps=6,
                  multi_planning_query=True,
 
                  *args,
@@ -907,10 +907,11 @@ class PlanHead_v2(BaseModule):
         plan_query = plan_query[None]  # 1,6,C
         # navi_embed
         navi_embed = self.navi_embedding.weight[command]
-        navi_embed = navi_embed[None]  # 1,1,C
 
         if self.multi_planning_query and self.planning_steps > 1:
             navi_embed = navi_embed[None].repeat(1, self.planning_steps, 1)
+        else:
+            navi_embed = navi_embed[None]
 
         # mlp_fuser
         plan_query = torch.cat([plan_query, navi_embed], dim=-1)

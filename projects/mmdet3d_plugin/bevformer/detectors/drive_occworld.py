@@ -492,6 +492,8 @@ class Drive_OccWorld(BEVFormer):
         elif 'v2' in self.plan_head_type:
             ref_pose_pred = self.plan_head(ref_bev, ref_command)
             ref_pose_loss = None
+            im_reward_loss = None
+            sim_reward_loss = None
 
         return ref_bev, ref_pose_pred, ref_pose_loss, im_reward_loss, sim_reward_loss
 
