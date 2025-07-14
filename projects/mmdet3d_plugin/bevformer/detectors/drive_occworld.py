@@ -535,12 +535,14 @@ class Drive_OccWorld(BEVFormer):
             if self.use_reward_model and is_multi_traj:
                 ref_pose_pred, ref_pose_loss, im_reward_loss, sim_reward_loss, plan_query = self.plan_with_reward(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj, is_multi_traj)
             else:
-                ref_pose_pred, ref_pose_loss, plan_query = self.plan_head(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj, self.use_plan_query_distillation)
+                ref_pose_pred, ref_pose_loss, plan_query = self.plan_head(ref_bev, ref_sample_traj, ref_sem_occupancy, 
+                                                                          ref_command, ref_real_traj, 
+                                                                          return_plan_query=self.use_plan_query_distillation)
                 im_reward_loss = None
                 sim_reward_loss = None
 
         elif 'v2' in self.plan_head_type:
-            ref_pose_pred, plan_query = self.plan_head(ref_bev, ref_command, self.use_plan_query_distillation)
+            ref_pose_pred, plan_query = self.plan_head(ref_bev, ref_command, return_plan_query=self.use_plan_query_distillation)
             ref_pose_loss = None
             im_reward_loss = None
             sim_reward_loss = None
@@ -560,7 +562,7 @@ class Drive_OccWorld(BEVFormer):
         ref_bev = self.pts_bbox_head_v2(img_feats, img_metas, prev_bev, only_bev=True)
 
         # C3. Planning Head v2
-        ref_pose_pred, plan_query = self.plan_head_v2(ref_bev, ref_command, self.use_plan_query_distillation)  #  (bs, planning_steps, 2)
+        ref_pose_pred, plan_query = self.plan_head_v2(ref_bev, ref_command, reuturn_plan_query=self.use_plan_query_distillation)  #  (bs, planning_steps, 2)
         ref_pose_loss = None
         im_reward_loss = None
         sim_reward_loss = None
@@ -664,7 +666,7 @@ class Drive_OccWorld(BEVFormer):
                     if self.use_reward_model and future_frame_index in reward_model_frame_idx:
                         pose_pred, pose_loss, im_reward_loss, sim_reward_loss, plan_query = self.plan_with_reward(pred_feat[-1], sample_traj_i, sem_occupancy_i, command_i, gt_traj_i, True)
                     else:
-                        pose_pred, pose_loss, plan_query = self.plan_head(pred_feat[-1], sample_traj_i, sem_occupancy_i, command_i, gt_traj_i, self.use_plan_query_distillation)
+                        pose_pred, pose_loss, plan_query = self.plan_head(pred_feat[-1], sample_traj_i, sem_occupancy_i, command_i, gt_traj_i, return_plan_query=self.use_plan_query_distillation)
                         im_reward_loss = None
                         sim_reward_loss = None
                     
@@ -678,7 +680,7 @@ class Drive_OccWorld(BEVFormer):
                     next_sim_rewards.append(sim_reward_loss) if sim_reward_loss is not None else None
 
                 elif 'v2' in self.plan_head_type:   # used for inflated_GMO when sem_occupancy does not distinguish categories in GMO
-                    pose_pred = self.plan_head(pred_feat[-1], command_i)
+                    pose_pred, plan_query = self.plan_head(pred_feat[-1], command_i, return_plan_query=self.use_plan_query_distillation)
                     next_pose_preds = torch.cat([next_pose_preds, pose_pred], dim=1)
                     im_reward_loss = None
                     sim_reward_loss = None
@@ -697,7 +699,7 @@ class Drive_OccWorld(BEVFormer):
         # D4. forward head.
         next_bev_feats = torch.stack(next_bev_feats, 0)
         # forward head
-        next_bev_preds = future_pred_head.forward_head(next_bev_feats)
+        next_bev_preds = future_pred_head.forward_head(next_bev_feats)  # 6,3,1,40000,256 ->6,3,1,1,40000,16,17
 
         # D5. obtain future bev feat
         # future_bev_feats = torch.stack([each[-1] for each in next_bev_feats], 0)  # current frame + future frames, 40000, 256
@@ -711,7 +713,8 @@ class Drive_OccWorld(BEVFormer):
         inter_num, select_frames, bs, num_cls, hw, d = occ_preds.shape
         occ_preds = occ_preds.view(inter_num, select_frames*bs, num_cls, self.bev_w, self.bev_h, d).transpose(3,4)
         # gts
-        occ_gts = occ_gts[0][self.future_pred_head.history_queue_length:]
+        if occ_gts[0].shape[0] != occ_preds.shape[1]:
+            occ_gts = occ_gts[0][self.future_pred_head.history_queue_length:]
         occ_gts = occ_gts.view(select_frames*bs, *occ_gts.shape[-3:])
         
         # occ loss
@@ -1022,7 +1025,7 @@ class Drive_OccWorld(BEVFormer):
 
         # D. Predict the Occ
         # D.1 repeat the ref_bev
-        ref_bev_ = ref_bev.unsqueeze(1).unsqueeze(0).repeat(len(self.future_pred_head_v2.bev_pred_head), 1, 1, 1).contiguous()
+        ref_bev_ = ref_bev.unsqueeze(1).unsqueeze(0).repeat(1, len(self.future_pred_head_v2.bev_pred_head), 1, 1, 1).contiguous()
         next_bev_preds = self.future_pred_head_v2.forward_head(ref_bev_)
 
         # E. Compute Loss

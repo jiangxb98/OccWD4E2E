@@ -96,11 +96,11 @@ class TemporalFusionAdapter(nn.Module):
         self.final_fusion = nn.Sequential(
             # 先融合
             nn.Conv2d(in_channels, in_channels, 3, padding=1),
-            nn.BatchNorm2d(in_channels),
+            # nn.BatchNorm2d(in_channels),
             nn.ReLU(inplace=True),
             # 再调整
             nn.Conv2d(in_channels, in_channels, 1),
-            nn.BatchNorm2d(in_channels)
+            # nn.BatchNorm2d(in_channels)
         )
         
     def forward(self, future_feats):
