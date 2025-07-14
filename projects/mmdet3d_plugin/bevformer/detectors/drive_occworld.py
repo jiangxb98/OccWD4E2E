@@ -236,12 +236,13 @@ class Drive_OccWorld(BEVFormer):
         if turn_on_plan and plan_head_v2 is not None and self.use_simple_plan:
             self.plan_head_v2 = builder.build_head(plan_head_v2)
             self.plan_head_type_v2 = plan_head_v2.type
+            self.plan_head_type = plan_head.type
             self.planning_metric = None
             self.planning_metric_type = planning_metric_type
             if planning_metric_type == 'v2':
-                self.planning_metric = PlanningMetric_v2(n_future=future_pred_frame_num+1)
+                self.planning_metric_v2 = PlanningMetric_v2(n_future=future_pred_frame_num+1)
             elif planning_metric_type == 'v3':
-                self.planning_metric = PlanningMetric_v3(n_future=future_pred_frame_num+1)
+                self.planning_metric_v2 = PlanningMetric_v3(n_future=future_pred_frame_num+1)
             else:
                 raise ValueError(f'Unknown planning metric type: {planning_metric_type}')
 
@@ -562,7 +563,7 @@ class Drive_OccWorld(BEVFormer):
         ref_bev = self.pts_bbox_head_v2(img_feats, img_metas, prev_bev, only_bev=True)
 
         # C3. Planning Head v2
-        ref_pose_pred, plan_query = self.plan_head_v2(ref_bev, ref_command, reuturn_plan_query=self.use_plan_query_distillation)  #  (bs, planning_steps, 2)
+        ref_pose_pred, plan_query = self.plan_head_v2(ref_bev, ref_command, return_plan_query=self.use_plan_query_distillation)  #  (bs, planning_steps, 2)
         ref_pose_loss = None
         im_reward_loss = None
         sim_reward_loss = None
@@ -707,18 +708,21 @@ class Drive_OccWorld(BEVFormer):
         return next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss, next_im_rewards, next_sim_rewards, next_bev_feats, plan_query_list
 
 
-    def compute_occ_loss(self, occ_preds, occ_gts):
+    def compute_occ_loss(self, occ_preds, occ_gts, method='v1'):
         # preds
         occ_preds = occ_preds.permute(1, 0, 3, 2, 6, 4, 5).squeeze(3)
         inter_num, select_frames, bs, num_cls, hw, d = occ_preds.shape
         occ_preds = occ_preds.view(inter_num, select_frames*bs, num_cls, self.bev_w, self.bev_h, d).transpose(3,4)
         # gts
-        if occ_gts[0].shape[0] != occ_preds.shape[1]:
+        if method == 'v1':
             occ_gts = occ_gts[0][self.future_pred_head.history_queue_length:]
         occ_gts = occ_gts.view(select_frames*bs, *occ_gts.shape[-3:])
         
         # occ loss
-        losses_occupancy = self.future_pred_head.loss_occ(occ_preds, occ_gts)
+        if method == 'v1':
+            losses_occupancy = self.future_pred_head.loss_occ(occ_preds, occ_gts)
+        elif method == 'v2':
+            losses_occupancy = self.future_pred_head_v2.loss_occ(occ_preds, occ_gts)
         return losses_occupancy
     
     def compute_sem_norm_loss(self, bev_sem_preds, occ_gts):
@@ -775,7 +779,7 @@ class Drive_OccWorld(BEVFormer):
         losses_flow = self.future_pred_head_flow.loss_flow(flow_preds, flow_gts)
         return losses_flow
     
-    def compute_plan_loss(self, outs_planning, sdc_planning, sdc_planning_mask, gt_future_boxes):
+    def compute_plan_loss(self, outs_planning, sdc_planning, sdc_planning_mask, gt_future_boxes, method='v1'):
         ## outs_planning, sdc_planning: under ref_lidar coord
         pred_under_ref = torch.cumsum(outs_planning, dim=1)  # 用于计算张量沿指定维度的累积和
 
@@ -784,22 +788,28 @@ class Drive_OccWorld(BEVFormer):
         else:
             gt_under_ref = sdc_planning
 
-        losses_plan = self.plan_head.loss(pred_under_ref, gt_under_ref, sdc_planning_mask, gt_future_boxes)
+        if method == 'v1':
+            losses_plan = self.plan_head.loss(pred_under_ref, gt_under_ref, sdc_planning_mask, gt_future_boxes)
+        elif method == 'v2':
+            losses_plan = self.plan_head_v2.loss(pred_under_ref, gt_under_ref, sdc_planning_mask, gt_future_boxes)
         return losses_plan
     
-    def evaluate_occ(self, occ_preds, occ_gts, img_metas):
+    def evaluate_occ(self, occ_preds, occ_gts, img_metas, method='v1'):
         # preds
         occ_preds = occ_preds.permute(1, 0, 3, 2, 6, 4, 5).squeeze(3)
         inter_num, select_frames, bs, num_cls, hw, d = occ_preds.shape
         occ_preds = occ_preds.view(inter_num, select_frames*bs, num_cls, self.bev_w, self.bev_h, d).transpose(3,4)
         # gts
-        occ_gts = occ_gts[0][self.future_pred_head.history_queue_length:]
+        if method == 'v1':
+            occ_gts = occ_gts[0][self.future_pred_head.history_queue_length:]
+        elif method == 'v2':
+            occ_gts = occ_gts[0][self.future_pred_head_v2.history_queue_length:]
         occ_gts = occ_gts.view(select_frames*bs, *occ_gts.shape[-3:])
 
-        hist_for_iou = self.evaluate_occupancy_forecasting(occ_preds[-1], occ_gts, img_metas=img_metas, save_pred=self._viz_pcd_flag, save_path=self._viz_pcd_path)
-        hist_for_iou_current = self.evaluate_occupancy_forecasting(occ_preds[-1][0:1], occ_gts[0:1], img_metas=img_metas, save_pred=False)
-        hist_for_iou_future = self.evaluate_occupancy_forecasting(occ_preds[-1][1:], occ_gts[1:], img_metas=img_metas, save_pred=False)
-        hist_for_iout_future_time_weighting = self.evaluate_occupancy_forecasting(occ_preds[-1][1:], occ_gts[1:], img_metas=img_metas, time_weighting=True)
+        hist_for_iou = self.evaluate_occupancy_forecasting(occ_preds[-1], occ_gts, img_metas=img_metas, save_pred=self._viz_pcd_flag, save_path=self._viz_pcd_path, method=method)
+        hist_for_iou_current = self.evaluate_occupancy_forecasting(occ_preds[-1][0:1], occ_gts[0:1], img_metas=img_metas, save_pred=False, method=method)
+        hist_for_iou_future = self.evaluate_occupancy_forecasting(occ_preds[-1][1:], occ_gts[1:], img_metas=img_metas, save_pred=False, method=method)
+        hist_for_iout_future_time_weighting = self.evaluate_occupancy_forecasting(occ_preds[-1][1:], occ_gts[1:], img_metas=img_metas, time_weighting=True, method=method)
         return hist_for_iou, hist_for_iou_current, hist_for_iou_future, hist_for_iout_future_time_weighting
 
     def evaluate_instance(self, occ_preds, flow_preds, occ_gts, instance_gts):
@@ -1028,14 +1038,14 @@ class Drive_OccWorld(BEVFormer):
         # D. Predict the Occ
         # D.1 repeat the ref_bev
         ref_bev_ = ref_bev.unsqueeze(1).unsqueeze(0).repeat(1, len(self.future_pred_head_v2.bev_pred_head), 1, 1, 1).contiguous()
-        next_bev_preds = self.future_pred_head_v2.forward_head(ref_bev_)
+        next_bev_preds = self.future_pred_head_v2.forward_head(ref_bev_)  # 6,3,1,1,40000,16,17
 
         # E. Compute Loss
         losses = dict()
 
         # E1. Compute loss for occ predictions.
         # TODO: 后面需要考虑是否把OCC的预测也加入进来！！！！！！
-        losses_occupancy = self.compute_occ_loss(next_bev_preds, segmentation[:, 0].unsqueeze(1))
+        losses_occupancy = self.compute_occ_loss(next_bev_preds, segmentation[:, 0].unsqueeze(1), method='v2')
         # 给losses_occupancy添加v2
         for key, value in losses_occupancy.items():
             losses[f'{key}_v2'] = value
@@ -1043,7 +1053,7 @@ class Drive_OccWorld(BEVFormer):
         # E3. Compute loss for plan regression.
         if self.turn_on_plan:
             gt_future_boxes = gt_future_boxes[0]   # Lout,[boxes]  NOTE: Current Support bs=1
-            losses_plan = self.compute_plan_loss(ref_pose_pred, sdc_planning, sdc_planning_mask, gt_future_boxes)
+            losses_plan = self.compute_plan_loss(ref_pose_pred, sdc_planning, sdc_planning_mask, gt_future_boxes, method='v2')
             # 给losses_plan的key添加v2
             for key, value in losses_plan.items():
                 losses[f'{key}_v2'] = value
@@ -1432,13 +1442,16 @@ class Drive_OccWorld(BEVFormer):
             ref_pose_pred = None
 
         # D. Predict future BEV.
-        # ref_bev = ref_bev.unsqueeze(1).unsqueeze(0).repeat(len(self.future_pred_head.bev_pred_head), 1, 1, 1).contiguous()
-        # next_bev_preds = self.future_pred_head.forward_head(ref_bev)        
+
+        ref_bev_ = ref_bev.unsqueeze(1).unsqueeze(0).repeat(1, len(self.future_pred_head_v2.bev_pred_head), 1, 1, 1).contiguous()
+        next_bev_preds = self.future_pred_head_v2.forward_head(ref_bev_)  # 1,3,1,1,40000,16,17
+        next_bev_preds = next_bev_preds.repeat(self.future_pred_frame_num, 1, 1, 1, 1, 1, 1)
+
 
         # E. Evaluate
         test_output = {}
         # evaluate occ
-        occ_iou, occ_iou_current, occ_iou_future, occ_iou_future_time_weighting = self.evaluate_occ(segmentation, segmentation, img_metas)
+        occ_iou, occ_iou_current, occ_iou_future, occ_iou_future_time_weighting = self.evaluate_occ(segmentation, segmentation, img_metas, method='v2')
         test_output.update(hist_for_iou=occ_iou, hist_for_iou_current=occ_iou_current, 
                            hist_for_iou_future=occ_iou_future, hist_for_iou_future_time_weighting=occ_iou_future_time_weighting)
         # evaluate flow(instance)
@@ -1450,7 +1463,7 @@ class Drive_OccWorld(BEVFormer):
         return test_output
 
 
-    def evaluate_occupancy_forecasting(self, pred, gt, img_metas=None, save_pred=False, save_path=None, time_weighting=False):
+    def evaluate_occupancy_forecasting(self, pred, gt, img_metas=None, save_pred=False, save_path=None, time_weighting=False, method='v1'):
 
         B, H, W, D = gt.shape
         pred = F.interpolate(pred, size=[H, W, D], mode='trilinear', align_corners=False).contiguous()
@@ -1473,7 +1486,10 @@ class Drive_OccWorld(BEVFormer):
 
             # GMO and others for max_label=2
             # multiple movable objects for max_label=9
-            hist_cur, iou_per_pred = fast_hist(pred_cur[noise_mask], gt_cur[noise_mask], max_label=self.future_pred_head.num_classes)
+            if method == 'v1':
+                hist_cur, iou_per_pred = fast_hist(pred_cur[noise_mask], gt_cur[noise_mask], max_label=self.future_pred_head.num_classes)
+            elif method == 'v2':
+                hist_cur, iou_per_pred = fast_hist(pred_cur[noise_mask], gt_cur[noise_mask], max_label=self.future_pred_head_v2.num_classes)
             if time_weighting:
                 hist_all = hist_all + 1 / (i+1) * hist_cur
             else:
