@@ -1445,7 +1445,7 @@ class Drive_OccWorld(BEVFormer):
 
         ref_bev_ = ref_bev.unsqueeze(1).unsqueeze(0).repeat(1, len(self.future_pred_head_v2.bev_pred_head), 1, 1, 1).contiguous()
         next_bev_preds = self.future_pred_head_v2.forward_head(ref_bev_)  # 1,3,1,1,40000,16,17
-        next_bev_preds = next_bev_preds.repeat(self.future_pred_frame_num, 1, 1, 1, 1, 1, 1)
+        next_bev_preds = next_bev_preds.repeat(self.future_pred_frame_num + 1, 1, 1, 1, 1, 1, 1)
 
 
         # E. Evaluate
