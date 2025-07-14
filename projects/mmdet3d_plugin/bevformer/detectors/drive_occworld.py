@@ -1258,12 +1258,12 @@ class Drive_OccWorld(BEVFormer):
             # 如果是使用自回归的结果去蒸馏，则用这个
             # pred_future_bev_feat: (6, 3, bs, HxW, C)->(bs, 6, HxW, C)
             pred_future_bev_feat_ = torch.stack([each[-1] for each in pred_future_bev_feat], 0).permute(1, 0, 2, 3).contiguous()
-            fused_future_bev_feat = self.temporal_fusion_adapter(pred_future_bev_feat)
+            pred_future_bev_feat_ = self.temporal_fusion_adapter(pred_future_bev_feat_)
             if plan_query_list is not None and self.use_plan_query_distillation:
                 plan_query_list.insert(0, plan_query)
-                return losses, fused_future_bev_feat, img_feats_for_simple_plan, prev_bev_for_simple_plan, plan_query_list
+                return losses, pred_future_bev_feat_, img_feats_for_simple_plan, prev_bev_for_simple_plan, plan_query_list
             else:
-                return losses, fused_future_bev_feat, img_feats_for_simple_plan, prev_bev_for_simple_plan, None
+                return losses, pred_future_bev_feat_, img_feats_for_simple_plan, prev_bev_for_simple_plan, None
         else:
             return losses, None, None, None, None
 

@@ -72,14 +72,13 @@ class TemporalFusionAdapter(nn.Module):
         self.n_future = n_future
         self.bev_h = bev_h
         self.bev_w = bev_w
+        
         # 时间编码
         self.temporal_encoding = nn.Parameter(torch.zeros(n_future, in_channels))
-        
-        nn.init.normal_(self.temporal_encoding)
+        nn.init.normal_(self.temporal_encoding, mean=0, std=1.0)
         
         # 时序特征处理
         self.temporal_fusion = nn.Sequential(
-            # 先对每个时序特征进行处理
             nn.Conv2d(in_channels, in_channels, 3, padding=1),
             nn.BatchNorm2d(in_channels),
             nn.ReLU(inplace=True)
@@ -91,6 +90,17 @@ class TemporalFusionAdapter(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(in_channels // reduction, in_channels),
             nn.Sigmoid()
+        )
+        
+        # 添加最终融合层
+        self.final_fusion = nn.Sequential(
+            # 先融合
+            nn.Conv2d(in_channels, in_channels, 3, padding=1),
+            nn.BatchNorm2d(in_channels),
+            nn.ReLU(inplace=True),
+            # 再调整
+            nn.Conv2d(in_channels, in_channels, 1),
+            nn.BatchNorm2d(in_channels)
         )
         
     def forward(self, future_feats):
@@ -106,7 +116,7 @@ class TemporalFusionAdapter(nn.Module):
         # 1. 处理每个时序特征
         processed_feats = []
         for t, feat in enumerate(future_feats):
-            feat = feat.unsqueeze(0)  # for bsz
+            feat = feat.unsqueeze(0)
             # 添加时间编码
             time_code = self.temporal_encoding[t].view(1, -1, 1, 1).expand(B, -1, self.bev_h, self.bev_w)
             feat = feat + time_code
@@ -116,17 +126,25 @@ class TemporalFusionAdapter(nn.Module):
             processed_feats.append(feat)
             
         # 2. 计算时序注意力权重
-        # 将特征转换为 (B, T, C, H, W)
-        stacked_feats = torch.stack(processed_feats, dim=1)
-        # 计算每个时间步的全局特征
+        stacked_feats = torch.stack(processed_feats, dim=1)  # (B, T, C, H, W)
         global_feats = torch.mean(stacked_feats, dim=[3, 4])  # (B, T, C)
         
-        # 计算时序注意力权重
+        # 3. 计算时序注意力权重
         temporal_weights = self.temporal_attention(global_feats)  # (B, T, C)
         temporal_weights = temporal_weights.unsqueeze(-1).unsqueeze(-1)  # (B, T, C, 1, 1)
         
-        # 3. 加权融合
+        # 4. 加权特征
         weighted_feats = stacked_feats * temporal_weights
-        fused_feat = torch.sum(weighted_feats, dim=1)  # (B, C, H, W)
+        
+        # 5. 先sum再通过融合层
+        sum_feat = torch.sum(weighted_feats, dim=1)  # (B, C, H, W)
+        fused_feat = self.final_fusion(sum_feat)
+        
+        # 6. 残差连接
+        fused_feat = fused_feat + sum_feat
+
+        # reshape for output
+        # bs, C, H, W
+        fused_feat = fused_feat.permute(0, 2, 3, 1).reshape(B, HW, C).contiguous()
         
         return fused_feat
