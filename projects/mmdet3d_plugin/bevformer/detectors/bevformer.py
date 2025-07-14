@@ -155,7 +155,7 @@ class BEVFormer(MVXTwoStageDetector):
         else:
             return self.forward_test(**kwargs)
 
-    def _obtain_frozen_history_bev(self, imgs_queue, img_metas_list, drop_prev_index):
+    def _obtain_frozen_history_bev(self, imgs_queue, img_metas_list, drop_prev_index, method='v1'):
         """Obtain history BEV features iteratively. To save GPU memory, gradients are not calculated.
             imgs_queue = B,L,Ncams,C,H,W  -4,-3,-2三帧
         """
@@ -181,8 +181,12 @@ class BEVFormer(MVXTwoStageDetector):
                     prev_bev = None
 
                 img_feats = [each_scale[:, i] for each_scale in img_feats_list] # stages*[B,Ncams,C,H,W]  某一帧的feat
-                prev_bev = self.pts_bbox_head(
-                    img_feats, img_metas, prev_bev, only_bev=True)
+                if method == 'v1':
+                    prev_bev = self.pts_bbox_head(
+                        img_feats, img_metas, prev_bev, only_bev=True)
+                elif method == 'v2':
+                    prev_bev = self.pts_bbox_head_v2(
+                        img_feats, img_metas, prev_bev, only_bev=True)
                 prev_bev_list.append(prev_bev)
 
             if i < drop_prev_index:
@@ -197,7 +201,7 @@ class BEVFormer(MVXTwoStageDetector):
         return prev_bev, prev_bev_list
 
     def _obtain_backwarded_history_bev(
-            self, imgs_queue, prev_bev, prev_bev_list, backward_img_metas_list, backwarded_start_idx, backwarded_end_idx):
+            self, imgs_queue, prev_bev, prev_bev_list, backward_img_metas_list, backwarded_start_idx, backwarded_end_idx, method='v1'):
         """Obtain history BEV features iteratively, with gradients computed.
         """
         backward_prev_img = imgs_queue[:, backwarded_start_idx:backwarded_end_idx, ...]
@@ -218,8 +222,12 @@ class BEVFormer(MVXTwoStageDetector):
                 prev_bev = None
 
             img_feats = [each_scale[:, idx] for each_scale in backward_img_feats_list]
-            prev_bev = self.pts_bbox_head(
-                img_feats, cur_backward_img_metas, prev_bev, only_bev=True)
+            if method == 'v1':
+                prev_bev = self.pts_bbox_head(
+                    img_feats, cur_backward_img_metas, prev_bev, only_bev=True)
+            elif method == 'v2':
+                prev_bev = self.pts_bbox_head_v2(
+                    img_feats, cur_backward_img_metas, prev_bev, only_bev=True)
             prev_bev_list.append(prev_bev)
 
         if len(prev_bev_list) > self.memory_queue_len - 1:
@@ -227,7 +235,7 @@ class BEVFormer(MVXTwoStageDetector):
 
         return prev_bev, prev_bev_list
 
-    def obtain_history_bev(self, img, img_metas, drop_prev_index=-1):
+    def obtain_history_bev(self, img, img_metas, drop_prev_index=-1, method='v1'):
         num_frames = img.shape[1]   # 只有history 没有当前帧
         backward_prev_frame_num = self.backwarded_prev_frame_num if self.training else 0    # 1
         backward_prev_start_idx = num_frames - backward_prev_frame_num                      # 4-1=3
@@ -236,12 +244,12 @@ class BEVFormer(MVXTwoStageDetector):
         prev_img = img[:, :backward_prev_start_idx, ...]    # B,L,Ncams,C,H,W  -4,-3,-2三帧
         prev_img_metas = copy.deepcopy(img_metas)
         # prev_bev: bs, bev_h * bev_w, c
-        prev_bev, prev_bev_list = self._obtain_frozen_history_bev(prev_img, prev_img_metas, drop_prev_index=drop_prev_index)
+        prev_bev, prev_bev_list = self._obtain_frozen_history_bev(prev_img, prev_img_metas, drop_prev_index=drop_prev_index, method=method)
         # Backwarded part.
         if backward_prev_frame_num > 0:
             prev_bev, prev_bev_list = self._obtain_backwarded_history_bev(
                 img, prev_bev, copy.deepcopy(img_metas),
-                backward_prev_start_idx, backward_prev_end_idx)
+                backward_prev_start_idx, backward_prev_end_idx, method=method)
         return prev_bev, prev_bev_list
 
     @auto_fp16(apply_to=('img', 'points'))

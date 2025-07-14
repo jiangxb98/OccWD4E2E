@@ -204,6 +204,8 @@ class WorldHeadTemplate(BaseModule):
         self.with_adapter = with_adapter
         if with_adapter:
             self.bev_adapter = FutureBEVAdapter(self.embed_dims, **adapter_cfg)
+        else:
+            self.bev_adapter = None
 
 
         # set loss weight.

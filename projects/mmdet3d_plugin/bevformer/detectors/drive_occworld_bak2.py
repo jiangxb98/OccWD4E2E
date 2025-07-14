@@ -8,7 +8,6 @@ import os
 import torch.nn.functional as F
 from projects.mmdet3d_plugin.bevformer.losses.reward_loss import compute_im_reward_loss, compute_sim_reward_loss
 from projects.mmdet3d_plugin.bevformer.modules import reward_model
-from projects.mmdet3d_plugin.bevformer.modules.adapter import TemporalFusionAdapter
 from projects.mmdet3d_plugin.models.utils.grid_mask import GridMask
 from projects.mmdet3d_plugin.bevformer.losses.plan_reg_loss_lidar import plan_reg_loss
 from projects.mmdet3d_plugin.bevformer.utils.metric_stp3 import PlanningMetric
@@ -24,8 +23,6 @@ class Drive_OccWorld(BEVFormer):
     def __init__(self,
                  # Future predictions.
                  future_pred_head=None,
-                 future_pred_head_v2=None,
-                 pts_bbox_head_v2=None,
                  turn_on_flow=False,
                  future_pred_frame_num=5,  # number of future prediction frames.
                  test_future_frame_num=5,  # number of future prediction frames when testing.
@@ -38,7 +35,6 @@ class Drive_OccWorld(BEVFormer):
                  # Plan Head configurations.
                  turn_on_plan=False,
                  plan_head=None,
-                 plan_head_v2=None,
 
                  # Memory Queue configurations.
                  memory_queue_len=1,
@@ -86,11 +82,6 @@ class Drive_OccWorld(BEVFormer):
                  freeze_reward_input=False,
                  loss_bev=None,
                  use_ref_bev_for_future_bev=False,
-
-                 use_simple_plan=False,  # v2
-                 use_autoregressive_plan=True,  # v1
-                 use_plan_feat_distillation=False,   # v1  用于bev特征的蒸馏
-                 use_plan_query_distillation=False,  # v1  用于plan query的蒸馏
                  *args,
                  **kwargs,):
 
@@ -111,14 +102,6 @@ class Drive_OccWorld(BEVFormer):
         self.loss_bev = builder.build_loss(loss_bev) if loss_bev is not None else None
         self.use_ref_bev_for_future_bev = use_ref_bev_for_future_bev
 
-        self.use_simple_plan = use_simple_plan
-        self.use_autoregressive_plan = use_autoregressive_plan
-        self.use_plan_feat_distillation = use_plan_feat_distillation
-        self.use_plan_query_distillation = use_plan_query_distillation
-
-        if self.use_plan_feat_distillation:
-            self.temporal_fusion_adapter = TemporalFusionAdapter(in_channels=256, n_future=future_pred_frame_num + 1)
-        
         # occ head
         if future_pred_head is not None:
             self.future_pred_head = builder.build_head(future_pred_head)
@@ -201,45 +184,12 @@ class Drive_OccWorld(BEVFormer):
             del self.future_pred_head.prev_frame_embedding
             del self.future_pred_head.can_bus_mlp
             del self.future_pred_head.positional_encoding
-            del self.future_pred_head.fusion_mlp
-            if self.future_pred_head.prev_render_neck is not None:
-                del self.future_pred_head.prev_render_neck
-            
             del self.future_pred_head_flow.transformer
             del self.future_pred_head_flow.bev_embedding
             del self.future_pred_head_flow.prev_frame_embedding
             del self.future_pred_head_flow.can_bus_mlp
             del self.future_pred_head_flow.positional_encoding
-
-
-        if future_pred_head_v2 is not None and self.use_simple_plan:
-            self.future_pred_head_v2 = builder.build_head(future_pred_head_v2)
         
-        if self.use_simple_plan:
-            del self.future_pred_head_v2.transformer
-            del self.future_pred_head_v2.bev_embedding
-            del self.future_pred_head_v2.prev_frame_embedding
-            del self.future_pred_head_v2.can_bus_mlp
-            del self.future_pred_head_v2.positional_encoding
-            del self.future_pred_head_v2.fusion_mlp
-            del self.future_pred_head_v2.prev_render_neck
-
-        if pts_bbox_head_v2 is not None and self.use_simple_plan:
-            self.pts_bbox_head_v2 = builder.build_head(pts_bbox_head_v2)
-        
-        if turn_on_plan and plan_head_v2 is not None and self.use_simple_plan:
-            self.plan_head_v2 = builder.build_head(plan_head_v2)
-            self.plan_head_type_v2 = plan_head_v2.type
-            self.planning_metric = None
-            self.planning_metric_type = planning_metric_type
-            if planning_metric_type == 'v2':
-                self.planning_metric = PlanningMetric_v2(n_future=future_pred_frame_num+1)
-            elif planning_metric_type == 'v3':
-                self.planning_metric = PlanningMetric_v3(n_future=future_pred_frame_num+1)
-            else:
-                raise ValueError(f'Unknown planning metric type: {planning_metric_type}')
-
-
         self.freeze_model_name = freeze_model_name
         if freeze_model_name is not None:
             self.freeze_model(freeze_model_name)
@@ -453,9 +403,7 @@ class Drive_OccWorld(BEVFormer):
 
     def plan_with_reward(self, bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj):
         # 这里需要改成可以控制只使用imitation reward或者simulation reward或者两者都使用
-        pose_pred, pose_loss, multi_traj, sim_rewards, plan_query = self.plan_head(bev, sample_traj, sem_occupancy, 
-                                                                       command, real_traj, is_multi_traj, 
-                                                                       self.training_epoch, self.use_plan_query_distillation)
+        pose_pred, pose_loss, multi_traj, sim_rewards = self.plan_head(bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj, self.training_epoch)
         im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(bev, pose_pred)  # simtraj_rewards shape: B*self.sim_reward_nums, sample_num
         # 将sim_rewards和sim_traj_rewards转换为0-1之间的值
         # sim_rewards = sim_rewards.sigmoid() if sim_rewards is not None else None
@@ -477,7 +425,6 @@ class Drive_OccWorld(BEVFormer):
             # 这个选择的逻辑是？
             # 1. 都默认选择gt reward最大的轨迹
             # 2. 或者前期选择gt reward最大的轨迹, 后期选择预测reward最大的轨迹
-            max_reward_idx = None
             if self.use_im_reward and not self.use_sim_reward and im_traj_rewards is not None:
                 all_rewards = im_reward_targets
                 max_reward_idx = all_rewards.argmax()
@@ -491,9 +438,7 @@ class Drive_OccWorld(BEVFormer):
                 max_reward_idx = all_rewards.argmax()
                 pose_pred = pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
             else:
-                pass
-            if max_reward_idx is not None and plan_query is not None:
-                plan_query = plan_query[max_reward_idx].unsqueeze(0)
+                pose_pred
         else:
             # max the im_traj_rewards + sim_traj_rewards
             all_rewards = 0
@@ -506,7 +451,7 @@ class Drive_OccWorld(BEVFormer):
             im_reward_loss = None
             sim_reward_loss = None
 
-        return pose_pred, pose_loss, im_reward_loss, sim_reward_loss, plan_query
+        return pose_pred, pose_loss, im_reward_loss, sim_reward_loss
 
     def obtain_ref_bev_with_plan(self, img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj=None, is_multi_traj=False):
         # Extract current BEV features.
@@ -527,39 +472,32 @@ class Drive_OccWorld(BEVFormer):
                 ref_sem_occupancy = ref_sem_occupancy.view(bs, self.bev_w, self.bev_h, d).transpose(1,2)
             
             if self.use_reward_model and is_multi_traj:
-                ref_pose_pred, ref_pose_loss, im_reward_loss, sim_reward_loss, plan_query = self.plan_with_reward(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj, is_multi_traj)
+                ref_pose_pred, ref_pose_loss, im_reward_loss, sim_reward_loss = self.plan_with_reward(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj, is_multi_traj)
+                # ref_pose_pred, ref_pose_loss, multi_traj, sim_rewards = self.plan_head(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj, True)
+                # im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(ref_bev, ref_pose_pred)
+                # sim_traj_rewards = sim_traj_rewards.sigmoid()
+                # # 1. im_loss gt的loss
+                # im_reward_loss, max_reward_idx = compute_im_reward_loss(ref_real_traj, im_traj_rewards, multi_traj)
+                # # 2. sim_loss, 根据世界模型的输出，计算sim_loss
+                # if sim_rewards is not None:
+                #     sim_reward_loss = compute_sim_reward_loss(sim_rewards, sim_traj_rewards)
+                # else:
+                #     sim_reward_loss = None
+                # # ref_pose_pred = best_traj
+                # ref_pose_pred = ref_pose_pred[max_reward_idx]  # [bs, 1, 2]
             else:
-                ref_pose_pred, ref_pose_loss, plan_query = self.plan_head(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj, self.use_plan_query_distillation)
+                ref_pose_pred, ref_pose_loss = self.plan_head(ref_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj)
                 im_reward_loss = None
                 sim_reward_loss = None
 
         elif 'v2' in self.plan_head_type:
-            ref_pose_pred, plan_query = self.plan_head(ref_bev, ref_command, self.use_plan_query_distillation)
+            ref_pose_pred = self.plan_head(ref_bev, ref_command)
             ref_pose_loss = None
             im_reward_loss = None
             sim_reward_loss = None
 
-        return ref_bev, ref_pose_pred, ref_pose_loss, im_reward_loss, sim_reward_loss, img_feats, prev_bev, plan_query
+        return ref_bev, ref_pose_pred, ref_pose_loss, im_reward_loss, sim_reward_loss
 
-
-    def obtain_ref_bev_with_plan_v2(self, img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj=None, is_multi_traj=False):
-        # Extract current BEV features.
-        # C1. Forward.
-        img_feats = self.extract_feat(img=img, img_metas=img_metas)
-        if not img_metas[0]['prev_bev_exists']:
-            prev_bev = None
-
-        # C2. BEVFormer Encoder Forward.
-        # ref_bev: bs, bev_h * bev_w, c
-        ref_bev = self.pts_bbox_head_v2(img_feats, img_metas, prev_bev, only_bev=True)
-
-        # C3. Planning Head v2
-        ref_pose_pred, plan_query = self.plan_head_v2(ref_bev, ref_command, self.use_plan_query_distillation)
-        ref_pose_loss = None
-        im_reward_loss = None
-        sim_reward_loss = None
-
-        return ref_bev, ref_pose_pred, ref_pose_loss, im_reward_loss, sim_reward_loss, plan_query
     
     def future_pred(self, prev_bev_input, action_condition_dict, cond_norm_dict, plan_dict, 
                     valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='occ'):
@@ -578,7 +516,6 @@ class Drive_OccWorld(BEVFormer):
         next_bev_feats, next_bev_sem, next_pose_loss = [ref_bev], [], []
         next_pose_preds = plan_dict['ref_pose_pred'] # B,Lout,2
         next_sim_rewards, next_im_rewards = [], []
-        plan_query_list = []
 
         if hasattr(plan_dict, 'im_reward_loss'):
             if plan_dict['im_reward_loss'] is not None:
@@ -656,14 +593,11 @@ class Drive_OccWorld(BEVFormer):
                     
                     # 20250708: pred_feat这里应该是3个的，送入plan_head只送入了一个，有点问题，那我蒸馏的时候咋蒸馏呢？蒸馏最后一层吧，先这样对齐
                     if self.use_reward_model and future_frame_index in reward_model_frame_idx:
-                        pose_pred, pose_loss, im_reward_loss, sim_reward_loss, plan_query = self.plan_with_reward(pred_feat[-1], sample_traj_i, sem_occupancy_i, command_i, gt_traj_i, True)
+                        pose_pred, pose_loss, im_reward_loss, sim_reward_loss = self.plan_with_reward(pred_feat[-1], sample_traj_i, sem_occupancy_i, command_i, gt_traj_i, True)
                     else:
-                        pose_pred, pose_loss, plan_query = self.plan_head(pred_feat[-1], sample_traj_i, sem_occupancy_i, command_i, gt_traj_i, self.use_plan_query_distillation)
+                        pose_pred, pose_loss = self.plan_head(pred_feat[-1], sample_traj_i, sem_occupancy_i, command_i, gt_traj_i)
                         im_reward_loss = None
                         sim_reward_loss = None
-                    
-                    if plan_query is not None:
-                        plan_query_list.append(plan_query)
                     
                     # update prev_pose and store pred
                     next_pose_preds = torch.cat([next_pose_preds, pose_pred], dim=1)
@@ -694,9 +628,9 @@ class Drive_OccWorld(BEVFormer):
         next_bev_preds = future_pred_head.forward_head(next_bev_feats)
 
         # D5. obtain future bev feat
-        # future_bev_feats = torch.stack([each[-1] for each in next_bev_feats], 0)  # current frame + future frames, 40000, 256
+        future_bev_feats = torch.stack([each[-1] for each in next_bev_feats], 0)  # current frame + future frames, 40000, 256
 
-        return next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss, next_im_rewards, next_sim_rewards, next_bev_feats, plan_query_list
+        return next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss, next_im_rewards, next_sim_rewards, future_bev_feats
 
 
     def compute_occ_loss(self, occ_preds, occ_gts):
@@ -879,187 +813,6 @@ class Drive_OccWorld(BEVFormer):
                       future_img=None,
                       future_img_metas=None,
                       ):
-        losses = dict()
-
-        if self.use_autoregressive_plan:
-            losses_v1, fused_future_bev_feat, img_feats_for_simple_plan, prev_bev_for_simple_plan, plan_query_v1 = self.forward_train_v1(img_metas, 
-                                           img, 
-                                           segmentation, 
-                                           instance, 
-                                           flow, 
-                                           sdc_planning, 
-                                           sdc_planning_mask, 
-                                           command, 
-                                           gt_future_boxes, 
-                                           sample_traj, 
-                                           vel_steering, 
-                                           future_img, 
-                                           future_img_metas)
-            losses.update(losses_v1=losses_v1)
-
-        if self.use_simple_plan:
-            losses_v2, ref_bev, plan_query_v2 =  self.forward_train_simple(img_metas, 
-                                                img, 
-                                                segmentation, 
-                                                instance, 
-                                                flow, 
-                                                sdc_planning, 
-                                                sdc_planning_mask, 
-                                                command, 
-                                                gt_future_boxes, 
-                                                sample_traj, 
-                                                vel_steering, 
-                                                future_img, 
-                                                future_img_metas,
-                                                img_feats_for_simple_plan,
-                                                prev_bev_for_simple_plan)
-            losses.update(losses_v2=losses_v2)
-
-        if self.use_plan_feat_distillation:
-            if self.use_plan_feat_distillation:
-                losses_distill_bev_feat = self.loss_bev(fused_future_bev_feat, ref_bev)
-                losses.update(losses_distill_bev_feat=losses_distill_bev_feat)
-            if self.use_plan_query_distillation:
-                losses_distill_plan_query = self.loss_bev(plan_query_v1, plan_query_v2)
-                losses.update(losses_distill_plan_query=losses_distill_plan_query)
-
-        
-        return losses
-
-
-    @auto_fp16(apply_to=('img', 'segmentation', 'flow', 'sdc_planning'))
-    def forward_train_simple(self,
-                      img_metas=None,
-                      img=None,
-                      # occ_flow
-                      segmentation=None,
-                      instance=None, 
-                      flow=None,
-                      # sdc-plan
-                      sdc_planning=None,
-                      sdc_planning_mask=None,
-                      command=None,
-                      gt_future_boxes=None,
-                      # sample_traj
-                      sample_traj=None,
-                      # vel_sterring
-                      vel_steering=None,
-                      future_img=None,
-                      future_img_metas=None,
-                      img_feats_for_simple_plan=None,
-                      prev_bev_for_simple_plan=None,
-                      ):
-
-        if segmentation.shape[1] != self.future_pred_frame_num + 1 + self.future_pred_head.history_queue_length:
-            segmentation = segmentation[:, :self.future_pred_frame_num + 1 + self.future_pred_head.history_queue_length, ...]
-        
-        # Augmentations.
-        # A1. Randomly drop cur image input.
-        if np.random.rand() < self.random_drop_image_rate:
-            img[:, -1:, ...] = torch.zeros_like(img[:, -1:, ...])
-        # A2. Randomly drop previous image inputs.
-        num_frames = img.size(1)  # bs=1, 3[t-T, ..., t-1, t], 6=multi_frames, 3=rgb, h, w
-        if np.random.rand() < self.random_drop_prev_rate:
-            random_drop_prev_v2_end_idx = (
-                self.random_drop_prev_end_idx if self.random_drop_prev_end_idx is not None
-                else num_frames)
-            drop_prev_index = np.random.randint(
-                self.random_drop_prev_start_idx, random_drop_prev_v2_end_idx)
-        else:
-            drop_prev_index = -1
-
-
-        # Extract history BEV features.
-        # B1. Forward previous frames.
-        if img_feats_for_simple_plan is None:
-            prev_img = img[:, :-1, ...]
-            prev_img_metas = copy.deepcopy(img_metas)
-            # B2. Randomly grid-mask prev_bev.
-            # 通过这个method来选择是否调用 pts_bbox_head_v2，默认是v1
-            prev_bev, prev_bev_list = self.obtain_history_bev(prev_img, prev_img_metas, drop_prev_index=drop_prev_index, method='v2')
-            # B2. Randomly grid-mask prev_bev.
-            if self.grid_mask_prev and prev_bev is not None:
-                b, n, c = prev_bev.shape
-                assert n == self.bev_h * self.bev_w
-                prev_bev = prev_bev.view(b, self.bev_h, self.bev_w, c)
-                prev_bev = prev_bev.permute(0, 3, 1, 2).contiguous()
-                prev_bev = self.grid_mask(prev_bev)
-                prev_bev = prev_bev.view(b, c, n).permute(0, 2, 1).contiguous()
-
-
-        # C. Extract current BEV features.
-        # reference就是当前帧
-        img = img[:, -1, ...]
-        img_metas = [each[num_frames-1] for each in img_metas]
-        ref_sample_traj = sample_traj[:, :, 0]
-        ref_real_traj = sdc_planning[:, 0]
-        ref_command = command[:, 0]  # 0:Right  1:Left  2:Forward
-        sem_occupancy = segmentation[0][2:].unsqueeze(0)   # using GT occupancy to calculate sample_traj cost during training
-        sem_occupancy = F.interpolate(sem_occupancy, size=(self.bev_h, self.bev_w, 16), mode='nearest')
-        ref_sem_occupancy = sem_occupancy[:, 0]
-        # C1. Planning Head v2
-        if img_feats_for_simple_plan is None:
-            ref_bev, ref_pose_pred, _, _, _, plan_query = self.obtain_ref_bev_with_plan_v2(img, 
-                                                                                img_metas, 
-                                                                                prev_bev, 
-                                                                                ref_sample_traj, 
-                                                                                ref_sem_occupancy, 
-                                                                                ref_command, 
-                                                                                ref_real_traj,
-                                                                                is_multi_traj=True if 0 in self.future_reward_model_frame_idx else False)
-        else:
-            ref_bev = self.pts_bbox_head_v2(img_feats_for_simple_plan, img_metas, prev_bev_for_simple_plan, only_bev=True)
-            
-            ref_pose_pred, plan_query = self.plan_head_v2(ref_bev, ref_command, self.use_plan_query_distillation)
-
-        # D. Predict the Occ
-        # D.1 repeat the ref_bev
-        ref_bev_ = ref_bev.unsqueeze(1).unsqueeze(0).repeat(len(self.future_pred_head_v2.bev_pred_head), 1, 1, 1).contiguous()
-        next_bev_preds = self.future_pred_head_v2.forward_head(ref_bev_)
-
-        # E. Compute Loss
-        losses = dict()
-
-        # E1. Compute loss for occ predictions.
-        # TODO: 后面需要考虑是否把OCC的预测也加入进来！！！！！！
-        losses_occupancy = self.compute_occ_loss(next_bev_preds, segmentation[:, 0].unsqueeze(1))
-        # 给losses_occupancy添加v2
-        for key, value in losses_occupancy.items():
-            losses[f'{key}_v2'] = value
-
-        # E3. Compute loss for plan regression.
-        if self.turn_on_plan:
-            gt_future_boxes = gt_future_boxes[0]   # Lout,[boxes]  NOTE: Current Support bs=1
-            losses_plan = self.compute_plan_loss(ref_pose_pred, sdc_planning, sdc_planning_mask, gt_future_boxes)
-            # 给losses_plan的key添加v2
-            for key, value in losses_plan.items():
-                losses[f'{key}_v2'] = value
-        else:
-            assert False, "not implemented"
-
-        return losses, ref_bev, plan_query
-    
-
-    @auto_fp16(apply_to=('img', 'segmentation', 'flow', 'sdc_planning'))
-    def forward_train_v1(self,
-                      img_metas=None,
-                      img=None,
-                      # occ_flow
-                      segmentation=None,
-                      instance=None, 
-                      flow=None,
-                      # sdc-plan
-                      sdc_planning=None,
-                      sdc_planning_mask=None,
-                      command=None,
-                      gt_future_boxes=None,
-                      # sample_traj
-                      sample_traj=None,
-                      # vel_sterring
-                      vel_steering=None,
-                      future_img=None,
-                      future_img_metas=None,
-                      ):
         """Forward training function.
         Args:
             img_metas (list[dict], optional): Meta information of each sample.
@@ -1127,15 +880,14 @@ class Drive_OccWorld(BEVFormer):
             # 这里是输出当前帧的预测轨迹，如果添加reward模型，那么应该是输出多个轨迹，然后使最优的轨迹输出最大
             # 注意：这里的是根据当前帧预测未来的occ和轨迹，当前帧没有上一帧的plan_traj，所以你进入这个函数后会发现预测未来occ函数使用的是self.future_pred_head.forward_head
             # 这个与带condition预测未来occ是不一样的，带condition是self.future_pred_head.forward()即可
-            ref_bev, ref_pose_pred, ref_pose_loss, im_reward_loss, sim_reward_loss, \
-                img_feats_for_simple_plan, prev_bev_for_simple_plan, plan_query = self.obtain_ref_bev_with_plan(img, 
-                                                                                                    img_metas, 
-                                                                                                    prev_bev, 
-                                                                                                    ref_sample_traj, 
-                                                                                                    ref_sem_occupancy, 
-                                                                                                    ref_command, 
-                                                                                                    ref_real_traj,
-                                                                                                    is_multi_traj=True if 0 in self.future_reward_model_frame_idx else False)
+            ref_bev, ref_pose_pred, ref_pose_loss, im_reward_loss, sim_reward_loss = self.obtain_ref_bev_with_plan(img, 
+                                                                                                                   img_metas, 
+                                                                                                                   prev_bev, 
+                                                                                                                   ref_sample_traj, 
+                                                                                                                   ref_sem_occupancy, 
+                                                                                                                   ref_command, 
+                                                                                                                   ref_real_traj,
+                                                                                                                   is_multi_traj=True if 0 in self.future_reward_model_frame_idx else False)
         else:
             ref_bev = self.obtain_ref_bev(img, img_metas, prev_bev)
             sem_occupancy, ref_pose_pred, ref_pose_loss = None, None, None
@@ -1170,15 +922,13 @@ class Drive_OccWorld(BEVFormer):
             # next_pose_preds bs,num_traj,2
             # action condition注意：轨迹点是当前帧(current)预测的下一帧自车位置（也就是轨迹点），command是预测的下一帧(next)的command，也就是未来bev特征是当前帧预测的轨迹点和下一帧要做的command(前行，左，右)
             # nuScenes 关键帧采样频率是2hz，所以每帧预测是0.5s的轨迹点
-            next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss, \
-                next_im_rewards, next_sim_rewards, pred_future_bev_feat, plan_query_list \
-                      = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict, 
+            next_bev_preds, next_bev_sem, next_pose_preds, next_pose_loss, next_im_rewards, next_sim_rewards, pred_future_bev_feat = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict, 
                                                                             valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='occ')
 
 
             # D6. predict future flow in auto-regressive manner
             if self.turn_on_flow:
-                next_bev_preds_flow, _, _, _, _, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict, 
+                next_bev_preds_flow, _, _, _, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict, 
                                                                 valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='flow')
 
 
@@ -1191,9 +941,9 @@ class Drive_OccWorld(BEVFormer):
                     future_img_metas[i][0]['can_bus'] = img_metas[0]['future_can_bus'][i+1]
                     future_img_metas[i][0]['aug_param'] = img_metas[0]['aug_param']
                 if self.use_ref_bev_for_future_bev:
-                    future_bev_feats_gt = self.obtain_future_bev_feat(future_img[0][1:], future_img_metas, ref_bev)  # 5, 40000, 256
+                    future_bev_feats = self.obtain_future_bev_feat(future_img[0][1:], future_img_metas, ref_bev)  # 5, 40000, 256
                 else:
-                    future_bev_feats_gt = self.obtain_future_bev_feat(future_img[0][1:], future_img_metas, None)
+                    future_bev_feats = self.obtain_future_bev_feat(future_img[0][1:], future_img_metas, None)
 
         # E. Compute Loss
         losses = dict()
@@ -1240,52 +990,15 @@ class Drive_OccWorld(BEVFormer):
 
         # E6. Compute loss for bev distillation
         if self.loss_bev is not None:
-            pred_future_bev_feat = torch.stack([each[-1] for each in pred_future_bev_feat], 0)
             pred_future_bev_feat = pred_future_bev_feat.squeeze(1)[1:]
-            losses_bev_distillation = self.loss_bev(pred_future_bev_feat, future_bev_feats_gt.detach())
+            losses_bev_distillation = self.loss_bev(pred_future_bev_feat, future_bev_feats.detach())
             losses.update(losses_bev_distillation=losses_bev_distillation)
 
-        # E7. Compute loss for plan distillation (transfer learning)
-        if self.use_plan_feat_distillation and self.use_simple_plan:
-            # 如果是使用自回归的结果去蒸馏，则用这个
-            fused_future_bev_feat = self.temporal_fusion_adapter(pred_future_bev_feat)
-            if plan_query_list is not None and self.use_plan_query_distillation:
-                plan_query_list.insert(0, plan_query)
-                return losses, fused_future_bev_feat, img_feats_for_simple_plan, prev_bev_for_simple_plan, plan_query_list
-            else:
-                return losses, fused_future_bev_feat, img_feats_for_simple_plan, prev_bev_for_simple_plan, None
-        else:
-            return losses, None, None, None, None
+        return losses
+
+
 
     def forward_test(self, 
-                     img_metas, 
-                     img=None,
-                     # occ_flow
-                     segmentation=None, 
-                     instance=None, 
-                     flow=None, 
-                     # sdc-plan
-                     sdc_planning=None,
-                     sdc_planning_mask=None,
-                     command=None,
-                     segmentation_bev=None,
-                     # sample_traj
-                     sample_traj=None,
-                     # vel_sterring
-                     vel_steering=None,
-                     **kwargs):
-        if self.use_autoregressive_plan and not self.use_simple_plan:
-            test_output = self.forward_test_v1(img_metas, img, segmentation, instance, flow, sdc_planning, sdc_planning_mask, command, segmentation_bev, sample_traj, vel_steering, **kwargs)
-        elif self.use_simple_plan:
-            test_output = self.forward_test_simple(img_metas, img, segmentation, instance, flow, sdc_planning, sdc_planning_mask, command, segmentation_bev, sample_traj, vel_steering, **kwargs)
-        else:
-            # 抛出参数异常
-            # 在use_autoregressive_plan和use_simple_plan中至少为True
-            raise ValueError('use_autoregressive_plan: {} and use_simple_plan: {} must be True at least one'.format(self.use_autoregressive_plan, self.use_simple_plan))
-        return test_output
-
-
-    def forward_test_v1(self, 
                      img_metas, 
                      img=None,
                      # occ_flow
@@ -1325,7 +1038,7 @@ class Drive_OccWorld(BEVFormer):
             ref_sample_traj = sample_traj[:, :, 0]
             ref_command = command[:, 0]
             ref_sem_occupancy = None
-            ref_bev, ref_pose_pred, _, _, _, _, _, _ = self.obtain_ref_bev_with_plan(img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command)
+            ref_bev, ref_pose_pred, _, _, _ = self.obtain_ref_bev_with_plan(img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command)
         else:
             ref_bev = self.obtain_ref_bev(img, img_metas, prev_bev)
             ref_pose_pred = None
@@ -1344,12 +1057,12 @@ class Drive_OccWorld(BEVFormer):
         plan_dict = {'sem_occupancy': None, 'sample_traj': sample_traj, 'gt_traj': sdc_planning, 'ref_pose_pred': ref_pose_pred}
 
         # D5. predict future occ in auto-regressive manner
-        next_bev_preds, _, next_pose_preds, _, _, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict,
+        next_bev_preds, _, next_pose_preds, _, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict,
                                                                 valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='occ')
 
         # D6. predict future flow in auto-regressive manner
         if self.turn_on_flow:
-            next_bev_preds_flow, _, _, _, _, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict,
+            next_bev_preds_flow, _, _, _, _, _, _ = self.future_pred(prev_bev_list, action_condition_dict, cond_norm_dict, plan_dict,
                                                             valid_frames, img_metas, prev_img_metas, num_frames, occ_flow='flow')
 
 
@@ -1371,68 +1084,6 @@ class Drive_OccWorld(BEVFormer):
 
         return test_output
 
-
-    def forward_test_simple(self, 
-                     img_metas, 
-                     img=None,
-                     # occ_flow
-                     segmentation=None, 
-                     instance=None, 
-                     flow=None, 
-                     # sdc-plan
-                     sdc_planning=None,
-                     sdc_planning_mask=None,
-                     command=None,
-                     segmentation_bev=None,
-                     # sample_traj
-                     sample_traj=None,
-                     # vel_sterring
-                     vel_steering=None,
-                     **kwargs):
-        """has similar implementation with train forward."""
-
-        # manually stop forward
-        if self.only_generate_dataset:
-            return {'hist_for_iou': 0, 'pred_c': 0, 'vpq':0}
-
-        self.eval()
-        # Extract history BEV features.
-        # B. Forward previous frames.
-        num_frames = img.size(1)
-        prev_img = img[:, :-1, ...]
-        prev_img_metas = copy.deepcopy(img_metas)
-        prev_bev, prev_bev_list = self.obtain_history_bev(prev_img, prev_img_metas, method='v2')
-
-
-        # C. Extract current BEV features.
-        img = img[:, -1, ...]
-        img_metas = [each[num_frames-1] for each in img_metas]
-        if self.turn_on_plan:
-            ref_sample_traj = sample_traj[:, :, 0]
-            ref_command = command[:, 0]
-            ref_sem_occupancy = None
-            ref_bev, ref_pose_pred, _, _, _, _ = self.obtain_ref_bev_with_plan_v2(img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command)
-        else:
-            ref_bev = self.obtain_ref_bev(img, img_metas, prev_bev)
-            ref_pose_pred = None
-
-        # D. Predict future BEV.
-        # ref_bev = ref_bev.unsqueeze(1).unsqueeze(0).repeat(len(self.future_pred_head.bev_pred_head), 1, 1, 1).contiguous()
-        # next_bev_preds = self.future_pred_head.forward_head(ref_bev)        
-
-        # E. Evaluate
-        test_output = {}
-        # evaluate occ
-        occ_iou, occ_iou_current, occ_iou_future, occ_iou_future_time_weighting = self.evaluate_occ(segmentation, segmentation, img_metas)
-        test_output.update(hist_for_iou=occ_iou, hist_for_iou_current=occ_iou_current, 
-                           hist_for_iou_future=occ_iou_future, hist_for_iou_future_time_weighting=occ_iou_future_time_weighting)
-        # evaluate flow(instance)
-        test_output.update(vpq=0.1)
-        # evluate plan
-        if self.turn_on_plan:
-            self.evaluate_plan(ref_pose_pred, sdc_planning, sdc_planning_mask, segmentation_bev, img_metas)
-
-        return test_output
 
 
     def evaluate_occupancy_forecasting(self, pred, gt, img_metas=None, save_pred=False, save_path=None, time_weighting=False):

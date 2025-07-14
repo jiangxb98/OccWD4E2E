@@ -183,7 +183,7 @@ class PlanHead_v1(BaseModule):
                  use_gt_occ_for_sim_reward=False,
                  random_select=False,
                  sim_reward_nums=1,
-                 convert_bs_mode=False, # 在计算多模轨迹时，是否需要转换为bs模式
+                 convert_bs_mode=True, # 在计算多模轨迹时，是否需要转换为bs模式，经过测试，True时，计算结果会更好
                  *args,
                  **kwargs):
 
@@ -400,7 +400,7 @@ class PlanHead_v1(BaseModule):
         return select_traj
 
     @auto_fp16(apply_to=('bev_feats'))
-    def forward(self, bev_feats, trajs, sem_occupancy, command, gt_trajs=None, multi_traj=False, training_epoch=0):
+    def forward(self, bev_feats, trajs, sem_occupancy, command, gt_trajs=None, multi_traj=False, training_epoch=0, return_plan_query=False):
         """ Forward function for each frame.
 
         Args:
@@ -536,8 +536,10 @@ class PlanHead_v1(BaseModule):
                 else:
                     # 使用预测的多模轨迹来计算sim_reward（加这个的原因是，尝试用预测的结果来计算sim_reward）
                     sim_rewards = self.cal_sim_reward(next_pose.detach().clone().transpose(1, 0), gt_trajs, None, instance_occupancy, drivable_area)
-
-            return next_pose, loss, select_traj_.to(torch.float32), sim_rewards
+            if return_plan_query:
+                return next_pose, loss, select_traj_.to(torch.float32), sim_rewards, plan_query
+            else:
+                return next_pose, loss, select_traj_.to(torch.float32), sim_rewards, None
         else:
             # select_traj
             select_traj = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area)  # B,3
@@ -585,7 +587,11 @@ class PlanHead_v1(BaseModule):
             
             # 6. plan regression
             next_pose = self.reg_branch(plan_query).view((-1, self.planning_steps, 2))   # B,mode=1,2
-            return next_pose, loss
+            
+            if return_plan_query:
+                return next_pose, loss, plan_query
+            else:
+                return next_pose, loss, None
 
     @auto_fp16(apply_to=('bev_feats'))
     def forward_bak(self, bev_feats, trajs, sem_occupancy, command, gt_trajs=None, multi_traj=False, training_epoch=0):
@@ -881,7 +887,7 @@ class PlanHead_v2(BaseModule):
         return loss_dict
 
     @auto_fp16(apply_to=('bev_feats'))
-    def forward(self, bev_feats, command):
+    def forward(self, bev_feats, command, return_plan_query=False):
         """ Forward function for each frame.
 
         Args:
@@ -931,4 +937,8 @@ class PlanHead_v2(BaseModule):
         
         # 6. plan regression
         next_pose = self.reg_branch(plan_query).view((-1, self.planning_steps, 2))   # B,mode=1,2
-        return next_pose
+
+        if return_plan_query:
+            return next_pose, plan_query
+        else:
+            return next_pose, None
