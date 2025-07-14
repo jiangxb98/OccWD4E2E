@@ -64,11 +64,14 @@ class TemporalFusionAdapter(nn.Module):
                  in_channels,
                  n_future=6,
                  reduction=8,
+                 bev_h=200,
+                 bev_w=200
                  ):
         super().__init__()
         self.in_channels = in_channels
         self.n_future = n_future
-        
+        self.bev_h = bev_h
+        self.bev_w = bev_w
         # 时间编码
         self.temporal_encoding = nn.Parameter(torch.zeros(n_future, in_channels))
         
@@ -90,19 +93,21 @@ class TemporalFusionAdapter(nn.Module):
             nn.Sigmoid()
         )
         
-    def forward(self, current_feat, future_feats):
+    def forward(self, future_feats):
         """
         Args:
-            current_feat: 当前帧BEV特征 (B, C, H, W)
-            future_feats: 未来帧BEV特征列表 [(B, C, H, W)] * n_future
+            future_feats: 未来帧BEV特征(bs, 6, HxW, C)
         """
-        B, C, H, W = current_feat.shape
+        B, T, HW, C = future_feats.shape
+        assert B == 1, "B must be 1"
+        future_feats = future_feats.squeeze(0).contiguous()
+        future_feats = future_feats.reshape(T, self.bev_h, self.bev_w, C).contiguous()
         
         # 1. 处理每个时序特征
         processed_feats = []
         for t, feat in enumerate(future_feats):
             # 添加时间编码
-            time_code = self.temporal_encoding[t].view(1, -1, 1, 1).expand(B, -1, H, W)
+            time_code = self.temporal_encoding[t].view(1, -1, 1, 1).expand(B, -1, self.bev_h, self.bev_w)
             feat = feat + time_code
             
             # 处理特征
@@ -126,4 +131,4 @@ class TemporalFusionAdapter(nn.Module):
         # 4. 计算与当前特征的对齐loss
         distill_loss = F.mse_loss(current_feat, fused_feat)
         
-        return distill_loss
+        return fused_feat

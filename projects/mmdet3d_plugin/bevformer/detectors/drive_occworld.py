@@ -91,6 +91,7 @@ class Drive_OccWorld(BEVFormer):
                  use_autoregressive_plan=True,  # v1
                  use_plan_feat_distillation=False,   # v1  用于bev特征的蒸馏
                  use_plan_query_distillation=False,  # v1  用于plan query的蒸馏
+                 use_future_img_distillation=False,  #     用于future img的蒸馏
                  *args,
                  **kwargs,):
 
@@ -115,6 +116,7 @@ class Drive_OccWorld(BEVFormer):
         self.use_autoregressive_plan = use_autoregressive_plan
         self.use_plan_feat_distillation = use_plan_feat_distillation
         self.use_plan_query_distillation = use_plan_query_distillation
+        self.use_future_img_distillation = use_future_img_distillation
 
         if self.use_plan_feat_distillation:
             self.temporal_fusion_adapter = TemporalFusionAdapter(in_channels=256, n_future=future_pred_frame_num + 1)
@@ -124,7 +126,7 @@ class Drive_OccWorld(BEVFormer):
             self.future_pred_head = builder.build_head(future_pred_head)
         # flow head
         self.turn_on_flow = turn_on_flow
-        if self.turn_on_flow:
+        if self.turn_on_flow and plan_head is not None:
             future_pred_head_flow = future_pred_head
             future_pred_head_flow['num_classes'] = 3
             future_pred_head_flow['turn_on_flow'] = True
@@ -141,7 +143,7 @@ class Drive_OccWorld(BEVFormer):
         
         # plan head
         self.turn_on_plan = turn_on_plan
-        if turn_on_plan:
+        if turn_on_plan and plan_head is not None:
             self.plan_head = builder.build_head(plan_head)
             self.plan_head_type = plan_head.type
             self.planning_metric = None
@@ -190,11 +192,12 @@ class Drive_OccWorld(BEVFormer):
 
         # remove the useless modules in pts_bbox_head
         #  * box/cls prediction head; decoder transformer.
-        del self.pts_bbox_head.cls_branches, self.pts_bbox_head.reg_branches
-        del self.pts_bbox_head.query_embedding
-        del self.pts_bbox_head.transformer.decoder
+        if hasattr(self, 'pts_bbox_head'):
+            del self.pts_bbox_head.cls_branches, self.pts_bbox_head.reg_branches
+            del self.pts_bbox_head.query_embedding
+            del self.pts_bbox_head.transformer.decoder
 
-        if self.only_train_cur_frame:
+        if self.only_train_cur_frame and hasattr(self, 'future_pred_head'):
             # remove useless parameters.
             del self.future_pred_head.transformer
             del self.future_pred_head.bev_embedding
@@ -215,18 +218,21 @@ class Drive_OccWorld(BEVFormer):
         if future_pred_head_v2 is not None and self.use_simple_plan:
             self.future_pred_head_v2 = builder.build_head(future_pred_head_v2)
         
-        if self.use_simple_plan:
             del self.future_pred_head_v2.transformer
             del self.future_pred_head_v2.bev_embedding
             del self.future_pred_head_v2.prev_frame_embedding
-            del self.future_pred_head_v2.can_bus_mlp
+            # del self.future_pred_head_v2.can_bus_mlp
             del self.future_pred_head_v2.positional_encoding
             del self.future_pred_head_v2.fusion_mlp
             del self.future_pred_head_v2.prev_render_neck
 
         if pts_bbox_head_v2 is not None and self.use_simple_plan:
+            pts_bbox_head_v2.upadte(train_cfg=None, test_cfg=None)
             self.pts_bbox_head_v2 = builder.build_head(pts_bbox_head_v2)
-        
+            del self.pts_bbox_head_v2.cls_branches, self.pts_bbox_head_v2.reg_branches
+            del self.pts_bbox_head_v2.query_embedding
+            del self.pts_bbox_head_v2.transformer.decoder        
+
         if turn_on_plan and plan_head_v2 is not None and self.use_simple_plan:
             self.plan_head_v2 = builder.build_head(plan_head_v2)
             self.plan_head_type_v2 = plan_head_v2.type
@@ -554,7 +560,7 @@ class Drive_OccWorld(BEVFormer):
         ref_bev = self.pts_bbox_head_v2(img_feats, img_metas, prev_bev, only_bev=True)
 
         # C3. Planning Head v2
-        ref_pose_pred, plan_query = self.plan_head_v2(ref_bev, ref_command, self.use_plan_query_distillation)
+        ref_pose_pred, plan_query = self.plan_head_v2(ref_bev, ref_command, self.use_plan_query_distillation)  #  (bs, planning_steps, 2)
         ref_pose_loss = None
         im_reward_loss = None
         sim_reward_loss = None
@@ -896,6 +902,8 @@ class Drive_OccWorld(BEVFormer):
                                            future_img, 
                                            future_img_metas)
             losses.update(losses_v1=losses_v1)
+        else:
+            losses_v1, fused_future_bev_feat, img_feats_for_simple_plan, prev_bev_for_simple_plan, plan_query_v1 = None, None, None, None, None
 
         if self.use_simple_plan:
             losses_v2, ref_bev, plan_query_v2 =  self.forward_train_simple(img_metas, 
@@ -950,8 +958,8 @@ class Drive_OccWorld(BEVFormer):
                       prev_bev_for_simple_plan=None,
                       ):
 
-        if segmentation.shape[1] != self.future_pred_frame_num + 1 + self.future_pred_head.history_queue_length:
-            segmentation = segmentation[:, :self.future_pred_frame_num + 1 + self.future_pred_head.history_queue_length, ...]
+        if segmentation.shape[1] != self.future_pred_frame_num + 1 + self.future_pred_head_v2.history_queue_length:
+            segmentation = segmentation[:, :self.future_pred_frame_num + 1 + self.future_pred_head_v2.history_queue_length, ...]
         
         # Augmentations.
         # A1. Randomly drop cur image input.
@@ -1239,15 +1247,17 @@ class Drive_OccWorld(BEVFormer):
             losses.update(losses_reward=losses_reward * 0.1)
 
         # E6. Compute loss for bev distillation
-        if self.loss_bev is not None:
-            pred_future_bev_feat = torch.stack([each[-1] for each in pred_future_bev_feat], 0)
-            pred_future_bev_feat = pred_future_bev_feat.squeeze(1)[1:]
-            losses_bev_distillation = self.loss_bev(pred_future_bev_feat, future_bev_feats_gt.detach())
+        if self.loss_bev is not None and self.use_future_img_distillation and future_img_metas is not None and future_img is not None:
+            pred_future_bev_feat_ = torch.stack([each[-1] for each in pred_future_bev_feat], 0)
+            pred_future_bev_feat_ = pred_future_bev_feat_.squeeze(1)[1:].contiguous()
+            losses_bev_distillation = self.loss_bev(pred_future_bev_feat_, future_bev_feats_gt.detach())
             losses.update(losses_bev_distillation=losses_bev_distillation)
 
         # E7. Compute loss for plan distillation (transfer learning)
         if self.use_plan_feat_distillation and self.use_simple_plan:
             # 如果是使用自回归的结果去蒸馏，则用这个
+            # pred_future_bev_feat: (6, 3, bs, HxW, C)->(bs, 6, HxW, C)
+            pred_future_bev_feat_ = torch.stack([each[-1] for each in pred_future_bev_feat], 0).permute(1, 0, 2, 3).contiguous()
             fused_future_bev_feat = self.temporal_fusion_adapter(pred_future_bev_feat)
             if plan_query_list is not None and self.use_plan_query_distillation:
                 plan_query_list.insert(0, plan_query)

@@ -91,7 +91,7 @@ use_simple_plan = True
 use_autoregressive_plan = True
 use_plan_query_distillation = True
 use_plan_feat_distillation = True
-loss_bev=dict(type='MSELoss', loss_weight=1.0),
+loss_bev=dict(type='MSELoss', loss_weight=1.0)
 
 model = dict(
     type='Drive_OccWorld',
