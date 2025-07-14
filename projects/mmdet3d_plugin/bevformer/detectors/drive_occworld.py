@@ -904,7 +904,7 @@ class Drive_OccWorld(BEVFormer):
                                            vel_steering, 
                                            future_img, 
                                            future_img_metas)
-            losses.update(losses_v1=losses_v1)
+            losses.update(losses_v1)
         else:
             losses_v1, fused_future_bev_feat, img_feats_for_simple_plan, prev_bev_for_simple_plan, plan_query_v1 = None, None, None, None, None
 
@@ -924,13 +924,15 @@ class Drive_OccWorld(BEVFormer):
                                                 future_img_metas,
                                                 img_feats_for_simple_plan,
                                                 prev_bev_for_simple_plan)
-            losses.update(losses_v2=losses_v2)
+            losses.update(losses_v2)
 
         if self.use_plan_feat_distillation:
             if self.use_plan_feat_distillation:
                 losses_distill_bev_feat = self.loss_bev(fused_future_bev_feat, ref_bev)
                 losses.update(losses_distill_bev_feat=losses_distill_bev_feat)
             if self.use_plan_query_distillation:
+                if isinstance(plan_query_v1, list):
+                    plan_query_v1 = torch.cat(plan_query_v1, dim=1)
                 losses_distill_plan_query = self.loss_bev(plan_query_v1, plan_query_v2)
                 losses.update(losses_distill_plan_query=losses_distill_plan_query)
 
