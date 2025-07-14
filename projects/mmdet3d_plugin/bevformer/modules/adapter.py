@@ -101,11 +101,12 @@ class TemporalFusionAdapter(nn.Module):
         B, T, HW, C = future_feats.shape
         assert B == 1, "B must be 1"
         future_feats = future_feats.squeeze(0).contiguous()
-        future_feats = future_feats.reshape(T, self.bev_h, self.bev_w, C).contiguous()
+        future_feats = future_feats.reshape(T, self.bev_h, self.bev_w, C).permute(0, 3, 1, 2).contiguous()
         
         # 1. 处理每个时序特征
         processed_feats = []
         for t, feat in enumerate(future_feats):
+            feat = feat.unsqueeze(0)  # for bsz
             # 添加时间编码
             time_code = self.temporal_encoding[t].view(1, -1, 1, 1).expand(B, -1, self.bev_h, self.bev_w)
             feat = feat + time_code
@@ -127,8 +128,5 @@ class TemporalFusionAdapter(nn.Module):
         # 3. 加权融合
         weighted_feats = stacked_feats * temporal_weights
         fused_feat = torch.sum(weighted_feats, dim=1)  # (B, C, H, W)
-        
-        # 4. 计算与当前特征的对齐loss
-        distill_loss = F.mse_loss(current_feat, fused_feat)
         
         return fused_feat

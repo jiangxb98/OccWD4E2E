@@ -227,7 +227,7 @@ class Drive_OccWorld(BEVFormer):
             del self.future_pred_head_v2.prev_render_neck
 
         if pts_bbox_head_v2 is not None and self.use_simple_plan:
-            pts_bbox_head_v2.upadte(train_cfg=None, test_cfg=None)
+            pts_bbox_head_v2.update(train_cfg=None, test_cfg=None)
             self.pts_bbox_head_v2 = builder.build_head(pts_bbox_head_v2)
             del self.pts_bbox_head_v2.cls_branches, self.pts_bbox_head_v2.reg_branches
             del self.pts_bbox_head_v2.query_embedding
