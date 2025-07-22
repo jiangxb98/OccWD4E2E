@@ -236,7 +236,6 @@ class Drive_OccWorld(BEVFormer):
         if turn_on_plan and plan_head_v2 is not None and self.use_simple_plan:
             self.plan_head_v2 = builder.build_head(plan_head_v2)
             self.plan_head_type_v2 = plan_head_v2.type
-            self.plan_head_type = plan_head.type
             self.planning_metric = None
             self.planning_metric_type = planning_metric_type
             if planning_metric_type == 'v2':
@@ -937,14 +936,15 @@ class Drive_OccWorld(BEVFormer):
             losses.update(losses_v2)
 
         if self.use_plan_feat_distillation:
-            if self.use_plan_feat_distillation:
-                losses_distill_bev_feat = self.loss_bev(fused_future_bev_feat, ref_bev)
-                losses.update(losses_distill_bev_feat=losses_distill_bev_feat)
-            if self.use_plan_query_distillation:
-                if isinstance(plan_query_v1, list):
-                    plan_query_v1 = torch.cat(plan_query_v1, dim=1)
-                losses_distill_plan_query = self.loss_bev(plan_query_v1, plan_query_v2)
-                losses.update(losses_distill_plan_query=losses_distill_plan_query)
+            losses_distill_bev_feat = self.loss_bev(fused_future_bev_feat, ref_bev)
+            losses.update(losses_distill_bev_feat=losses_distill_bev_feat)
+        if self.use_plan_query_distillation:
+            if plan_query_v1 is None or plan_query_v2 is None:
+                assert False, "plan_query_v1 or plan_query_v2 is None"
+            if isinstance(plan_query_v1, list):
+                plan_query_v1 = torch.cat(plan_query_v1, dim=1)
+            losses_distill_plan_query = self.loss_bev(plan_query_v1, plan_query_v2)
+            losses.update(losses_distill_plan_query=losses_distill_plan_query)
 
         
         return losses
@@ -1269,16 +1269,18 @@ class Drive_OccWorld(BEVFormer):
             losses.update(losses_bev_distillation=losses_bev_distillation)
 
         # E7. Compute loss for plan distillation (transfer learning)
-        if self.use_plan_feat_distillation and self.use_simple_plan:
-            # 如果是使用自回归的结果去蒸馏，则用这个
-            # pred_future_bev_feat: (6, 3, bs, HxW, C)->(bs, 6, HxW, C)
-            pred_future_bev_feat_ = torch.stack([each[-1] for each in pred_future_bev_feat], 0).permute(1, 0, 2, 3).contiguous()
-            pred_future_bev_feat_ = self.temporal_fusion_adapter(pred_future_bev_feat_)
-            if plan_query_list is not None and self.use_plan_query_distillation:
-                plan_query_list.insert(0, plan_query)
-                return losses, pred_future_bev_feat_, img_feats_for_simple_plan, prev_bev_for_simple_plan, plan_query_list
+
+        if self.use_simple_plan:
+            if self.use_plan_feat_distillation:
+                # 如果是使用自回归的结果去蒸馏，则用这个
+                # pred_future_bev_feat: (6, 3, bs, HxW, C)->(bs, 6, HxW, C)
+                pred_future_bev_feat_ = torch.stack([each[-1] for each in pred_future_bev_feat], 0).permute(1, 0, 2, 3).contiguous()
+                pred_future_bev_feat_ = self.temporal_fusion_adapter(pred_future_bev_feat_)
             else:
-                return losses, pred_future_bev_feat_, img_feats_for_simple_plan, prev_bev_for_simple_plan, None
+                pred_future_bev_feat_ = None
+            if self.use_plan_query_distillation and plan_query_list is not None:
+                plan_query_list.insert(0, plan_query)
+            return losses, pred_future_bev_feat_, img_feats_for_simple_plan, prev_bev_for_simple_plan, plan_query_list
         else:
             return losses, None, None, None, None
 
@@ -1444,14 +1446,14 @@ class Drive_OccWorld(BEVFormer):
         # D. Predict future BEV.
 
         ref_bev_ = ref_bev.unsqueeze(1).unsqueeze(0).repeat(1, len(self.future_pred_head_v2.bev_pred_head), 1, 1, 1).contiguous()
-        next_bev_preds = self.future_pred_head_v2.forward_head(ref_bev_)  # 1,3,1,1,40000,16,17
+        next_bev_preds = self.future_pred_head_v2.forward_head(ref_bev_)  # 6,3,1,1,40000,16,17
         next_bev_preds = next_bev_preds.repeat(self.future_pred_frame_num + 1, 1, 1, 1, 1, 1, 1)
 
 
         # E. Evaluate
         test_output = {}
         # evaluate occ
-        occ_iou, occ_iou_current, occ_iou_future, occ_iou_future_time_weighting = self.evaluate_occ(segmentation, segmentation, img_metas, method='v2')
+        occ_iou, occ_iou_current, occ_iou_future, occ_iou_future_time_weighting = self.evaluate_occ(next_bev_preds, segmentation, img_metas, method='v2')
         test_output.update(hist_for_iou=occ_iou, hist_for_iou_current=occ_iou_current, 
                            hist_for_iou_future=occ_iou_future, hist_for_iou_future_time_weighting=occ_iou_future_time_weighting)
         # evaluate flow(instance)

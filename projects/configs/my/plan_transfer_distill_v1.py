@@ -87,10 +87,11 @@ pred_height = 16
 
 # 将自回归的冻结住
 freeze_model_name = ['img_backbone', 'img_neck', 'pts_bbox_head', 'plan_head', 'future_pred_head']
+unfreeze_model_name = ['pts_bbox_head_v2', 'plan_head_v2', 'future_pred_head_v2']
 use_simple_plan = True
 use_autoregressive_plan = True
 use_plan_query_distillation = True
-use_plan_feat_distillation = True
+use_plan_feat_distillation = False
 loss_bev=dict(type='MSELoss', loss_weight=1.0)
 
 model = dict(
@@ -103,7 +104,7 @@ model = dict(
     only_generate_dataset=only_generate_dataset,
     supervise_all_future=supervise_all_future,
     freeze_model_name=freeze_model_name,
-
+    unfreeze_model_name=unfreeze_model_name,
     # BEV configuration.
     point_cloud_range=point_cloud_range,
     bev_h=bev_h_,
@@ -708,7 +709,7 @@ lr_config = dict(
 
 evaluation = dict(interval=1, pipeline=test_pipeline)
 
-runner = dict(type='EpochBasedRunner', max_epochs=12)
+runner = dict(type='EpochBasedRunner', max_epochs=24)
 load_from = 'pretrained/r101_dcn_fcos3d_pretrain.pth'
 log_config = dict(
     interval=50,
