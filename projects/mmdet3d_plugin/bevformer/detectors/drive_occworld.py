@@ -263,6 +263,9 @@ class Drive_OccWorld(BEVFormer):
 
         # 打印self模型的所有参数的梯度设置到指定文件,文件名是时间戳
         grad_path = f'work_dirs/grad_params/param_grad.txt'
+        if not os.path.exists(grad_path):
+            os.makedirs(os.path.dirname(grad_path), exist_ok=True)
+            
         with open(grad_path, 'w') as f:
             for name, param in self.named_parameters():
                 f.write(f"{name}: {param.requires_grad}\n")
@@ -288,10 +291,10 @@ class Drive_OccWorld(BEVFormer):
 
     ####################### Image Feature Extraction. #######################
     @auto_fp16(apply_to=('img'))
-    def extract_feat(self, img, img_metas=None, len_queue=None):
+    def extract_feat(self, img, img_metas=None, len_queue=None, method='v1'):
         """Extract features from images and points."""
 
-        img_feats = self.extract_img_feat(img, img_metas, len_queue=len_queue)
+        img_feats = self.extract_img_feat(img, img_metas, len_queue=len_queue, method=method)
         if ('aug_param' in img_metas[0] and
                 img_metas[0]['aug_param'] is not None and
                 img_metas[0]['aug_param']['CropResizeFlipImage_param'][-1] is True):
@@ -299,7 +302,7 @@ class Drive_OccWorld(BEVFormer):
 
         return img_feats
 
-    def extract_img_feat(self, img, img_metas, len_queue=None):
+    def extract_img_feat(self, img, img_metas, len_queue=None, method='v1'):
         """Extract features of images."""
         B = img.size(0)
         if img is not None:
@@ -311,7 +314,10 @@ class Drive_OccWorld(BEVFormer):
             if self.use_grid_mask and self.grid_mask_image:
                 img = self.grid_mask(img)
 
-            img_feats = self.img_backbone(img)
+            if method == 'v1':
+                img_feats = self.img_backbone(img)
+            elif method == 'v2':
+                img_feats = self.img_backbone_v2(img)
             if isinstance(img_feats, dict):
                 img_feats = list(img_feats.values())
             if self.use_grid_mask and self.grid_mask_backbone_feat:
@@ -324,7 +330,10 @@ class Drive_OccWorld(BEVFormer):
             return None
 
         if self.with_img_neck:
-            img_feats = self.img_neck(img_feats)
+            if method == 'v1':
+                img_feats = self.img_neck(img_feats)
+            elif method == 'v2':
+                img_feats = self.img_neck_v2(img_feats)
             if self.use_grid_mask and self.grid_mask_fpn_feat:
                 new_img_feats = []
                 for img_feat in img_feats:
@@ -567,7 +576,7 @@ class Drive_OccWorld(BEVFormer):
     def obtain_ref_bev_with_plan_v2(self, img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj=None, is_multi_traj=False):
         # Extract current BEV features.
         # C1. Forward.
-        img_feats = self.extract_feat(img=img, img_metas=img_metas)
+        img_feats = self.extract_feat(img=img, img_metas=img_metas, method='v2')
         if not img_metas[0]['prev_bev_exists']:
             prev_bev = None
 
@@ -945,8 +954,8 @@ class Drive_OccWorld(BEVFormer):
                                                 vel_steering, 
                                                 future_img, 
                                                 future_img_metas,
-                                                img_feats_for_simple_plan,
-                                                prev_bev_for_simple_plan)
+                                                None,#img_feats_for_simple_plan,
+                                                None,)#prev_bev_for_simple_plan)
             losses.update(losses_v2)
 
         if self.use_plan_feat_distillation:
@@ -1045,9 +1054,11 @@ class Drive_OccWorld(BEVFormer):
                                                                                 ref_real_traj,
                                                                                 is_multi_traj=True if 0 in self.future_reward_model_frame_idx else False)
         else:
-            ref_bev = self.pts_bbox_head_v2(img_feats_for_simple_plan, img_metas, prev_bev_for_simple_plan, only_bev=True)
+            # ref_bev = self.pts_bbox_head_v2(img_feats_for_simple_plan, img_metas, prev_bev_for_simple_plan, only_bev=True)
             
-            ref_pose_pred, plan_query = self.plan_head_v2(ref_bev, ref_command, self.use_plan_query_distillation)
+            # ref_pose_pred, plan_query = self.plan_head_v2(ref_bev, ref_command, self.use_plan_query_distillation)
+
+            assert False, "not implemented because use the shared feature is not work"
 
         # D. Predict the Occ
         # D.1 repeat the ref_bev

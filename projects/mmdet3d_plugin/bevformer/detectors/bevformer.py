@@ -65,7 +65,7 @@ class BEVFormer(MVXTwoStageDetector):
         }
         self.backwarded_prev_frame_num = backwarded_prev_frame_num
 
-    def extract_img_feat(self, img, img_metas, len_queue=None):
+    def extract_img_feat(self, img, img_metas, len_queue=None, method='v1'):
         """Extract features of images."""
         B = img.size(0)
         if img is not None:
@@ -82,14 +82,19 @@ class BEVFormer(MVXTwoStageDetector):
                 img = img.reshape(B * N, C, H, W)
             if self.use_grid_mask:
                 img = self.grid_mask(img)
-
-            img_feats = self.img_backbone(img)
+            if method == 'v1':
+                img_feats = self.img_backbone(img)
+            elif method == 'v2':
+                img_feats = self.img_backbone_v2(img)
             if isinstance(img_feats, dict):
                 img_feats = list(img_feats.values())
         else:
             return None
         if self.with_img_neck:
-            img_feats = self.img_neck(img_feats)
+            if method == 'v1':
+                img_feats = self.img_neck(img_feats)
+            elif method == 'v2':
+                img_feats = self.img_neck_v2(img_feats)
 
         img_feats_reshaped = []
         for img_feat in img_feats:
@@ -101,10 +106,10 @@ class BEVFormer(MVXTwoStageDetector):
         return img_feats_reshaped
 
     @auto_fp16(apply_to=('img'))
-    def extract_feat(self, img, img_metas=None, len_queue=None):
+    def extract_feat(self, img, img_metas=None, len_queue=None, method='v1'):
         """Extract features from images and points."""
 
-        img_feats = self.extract_img_feat(img, img_metas, len_queue=len_queue)
+        img_feats = self.extract_img_feat(img, img_metas, len_queue=len_queue, method=method)
 
         return img_feats
 
@@ -171,7 +176,8 @@ class BEVFormer(MVXTwoStageDetector):
             img_feats_list = self.extract_feat( # stages*[B,Lin,Ncams,C,H,W]
                 img=imgs_queue,
                 len_queue=len_queue,
-                img_metas=img_metas)
+                img_metas=img_metas,
+                method=method)
 
         prev_bev_list = []
         for i in range(len_queue):
@@ -213,7 +219,8 @@ class BEVFormer(MVXTwoStageDetector):
             backward_img_feats_list = self.extract_feat(
                 img=backward_prev_img,
                 img_metas=backward_img_metas,
-                len_queue=len_queue)
+                len_queue=len_queue,
+                method=method)
         self.train()
         for idx, prev_idx in enumerate(range(backwarded_start_idx, backwarded_end_idx)):
             cur_backward_img_metas = [each[prev_idx] for each in backward_img_metas_list]

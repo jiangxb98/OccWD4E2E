@@ -90,8 +90,8 @@ freeze_model_name = ['img_backbone', 'img_neck', 'pts_bbox_head', 'plan_head', '
 unfreeze_model_name = ['pts_bbox_head_v2', 'plan_head_v2', 'future_pred_head_v2']
 use_simple_plan = True
 use_autoregressive_plan = True
-use_plan_query_distillation = True
-use_plan_feat_distillation = False
+use_plan_query_distillation = False
+use_plan_feat_distillation = True
 loss_bev=dict(type='MSELoss', loss_weight=1.0)
 
 find_unused_parameters=False  #  pts_bbox_head_v2.code_weights.requires_grad alwarys is False
@@ -134,25 +134,6 @@ model = dict(
         dcn=dict(type='DCNv2', deform_groups=1, fallback_on_stride=False), # original DCNv2 will print log when perform load_state_dict
         stage_with_dcn=(False, False, True, True)),
     img_neck=dict(
-        type='FPN',
-        in_channels=[512, 1024, 2048],
-        out_channels=_dim_,
-        start_level=0,
-        add_extra_convs='on_output',
-        num_outs=4,
-        relu_before_extra_convs=True),
-    img_backbone_v2=dict(
-        type='ResNet',
-        depth=101,
-        num_stages=4,
-        out_indices=(1, 2, 3,),
-        frozen_stages=1,
-        norm_cfg=dict(type='BN2d', requires_grad=False),
-        norm_eval=True,
-        style='caffe',
-        dcn=dict(type='DCNv2', deform_groups=1, fallback_on_stride=False), # original DCNv2 will print log when perform load_state_dict
-        stage_with_dcn=(False, False, True, True)),
-    img_neck_v2=dict(
         type='FPN',
         in_channels=[512, 1024, 2048],
         out_channels=_dim_,
