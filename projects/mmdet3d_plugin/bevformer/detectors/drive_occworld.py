@@ -14,7 +14,7 @@ from projects.mmdet3d_plugin.bevformer.losses.plan_reg_loss_lidar import plan_re
 from projects.mmdet3d_plugin.bevformer.utils.metric_stp3 import PlanningMetric
 from projects.mmdet3d_plugin.bevformer.utils.planning_metrics import PlanningMetric_v2, PlanningMetric_v3
 from torchvision.transforms.functional import rotate
-
+import time
 from .bevformer import BEVFormer
 from mmdet3d.models import builder
 from ..utils import e2e_predictor_utils
@@ -26,6 +26,8 @@ class Drive_OccWorld(BEVFormer):
                  future_pred_head=None,
                  future_pred_head_v2=None,
                  pts_bbox_head_v2=None,
+                 img_backbone_v2=None,
+                 img_neck_v2=None,
                  turn_on_flow=False,
                  future_pred_frame_num=5,  # number of future prediction frames.
                  test_future_frame_num=5,  # number of future prediction frames when testing.
@@ -214,6 +216,12 @@ class Drive_OccWorld(BEVFormer):
             del self.future_pred_head_flow.can_bus_mlp
             del self.future_pred_head_flow.positional_encoding
 
+        if img_backbone_v2 is not None:
+            self.img_backbone_v2 = builder.build_backbone(img_backbone_v2)
+
+        if img_neck_v2 is not None:
+            self.img_neck_v2 = builder.build_neck(img_neck_v2)
+
 
         if future_pred_head_v2 is not None and self.use_simple_plan:
             self.future_pred_head_v2 = builder.build_head(future_pred_head_v2)
@@ -253,11 +261,17 @@ class Drive_OccWorld(BEVFormer):
         if unfreeze_model_name is not None:
             self.unfreeze_model(unfreeze_model_name)
 
+        # 打印self模型的所有参数的梯度设置到指定文件,文件名是时间戳
+        grad_path = f'work_dirs/grad_params/param_grad.txt'
+        with open(grad_path, 'w') as f:
+            for name, param in self.named_parameters():
+                f.write(f"{name}: {param.requires_grad}\n")
+
 
     def freeze_model(self, model_name_list):
         for name, param in self.named_parameters():
             for model_name in model_name_list:
-                if model_name in name:
+                if model_name in name and '_v2' not in name: # 如果是v1模型，则冻结参数
                     param.requires_grad = False
                     break
 

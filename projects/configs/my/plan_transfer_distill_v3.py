@@ -94,6 +94,8 @@ use_plan_query_distillation = True
 use_plan_feat_distillation = True
 loss_bev=dict(type='MSELoss', loss_weight=1.0)
 
+find_unused_parameters=False  #  pts_bbox_head_v2.code_weights.requires_grad alwarys is False
+
 model = dict(
     type='Drive_OccWorld',
     turn_on_flow=turn_on_flow,

@@ -90,11 +90,11 @@ freeze_model_name = ['img_backbone', 'img_neck', 'pts_bbox_head', 'plan_head', '
 unfreeze_model_name = ['pts_bbox_head_v2', 'plan_head_v2', 'future_pred_head_v2']
 use_simple_plan = True
 use_autoregressive_plan = True
-use_plan_query_distillation = False
-use_plan_feat_distillation = True
+use_plan_query_distillation = True
+use_plan_feat_distillation = False
 loss_bev=dict(type='MSELoss', loss_weight=1.0)
 
-find_unused_parameters=False  #  pts_bbox_head_v2.code_weights.requires_grad alwarys is False
+find_unused_parameters=True  #  pts_bbox_head_v2.code_weights.requires_grad alwarys is False
 
 model = dict(
     type='Drive_OccWorld',
