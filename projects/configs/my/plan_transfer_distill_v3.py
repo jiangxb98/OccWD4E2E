@@ -87,7 +87,7 @@ pred_height = 16
 
 # 将自回归的冻结住
 freeze_model_name = ['img_backbone', 'img_neck', 'pts_bbox_head', 'plan_head', 'future_pred_head']
-unfreeze_model_name = ['pts_bbox_head_v2', 'plan_head_v2', 'future_pred_head_v2']
+unfreeze_model_name = None
 use_simple_plan = True
 use_autoregressive_plan = True
 use_plan_query_distillation = True

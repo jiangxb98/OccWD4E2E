@@ -452,16 +452,19 @@ class Drive_OccWorld(BEVFormer):
         return tgt_grids, aligned_bev_grids, ref2future, future_to_history_list.transpose(-1, -2)
     
 
-    def obtain_ref_bev(self, img, img_metas, prev_bev):
+    def obtain_ref_bev(self, img, img_metas, prev_bev, method='v1'):
         # Extract current BEV features.
         # C1. Forward.
-        img_feats = self.extract_feat(img=img, img_metas=img_metas)
+        img_feats = self.extract_feat(img=img, img_metas=img_metas, method=method)
         if not img_metas[0]['prev_bev_exists']:
             prev_bev = None
 
         # C3. BEVFormer Encoder Forward.
         # ref_bev: bs, bev_h * bev_w, c
-        ref_bev = self.pts_bbox_head(img_feats, img_metas, prev_bev, only_bev=True)  # get the input
+        if method == 'v1':
+            ref_bev = self.pts_bbox_head(img_feats, img_metas, prev_bev, only_bev=True)  # get the input
+        elif method == 'v2':
+            ref_bev = self.pts_bbox_head_v2(img_feats, img_metas, prev_bev, only_bev=True)  # get the input
         return ref_bev
 
     def obtain_future_bev_feat(self, future_img, future_img_metas, prev_bev):
@@ -1465,7 +1468,7 @@ class Drive_OccWorld(BEVFormer):
             ref_sem_occupancy = None
             ref_bev, ref_pose_pred, _, _, _, _ = self.obtain_ref_bev_with_plan_v2(img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command)
         else:
-            ref_bev = self.obtain_ref_bev(img, img_metas, prev_bev)
+            ref_bev = self.obtain_ref_bev(img, img_metas, prev_bev, method='v2')
             ref_pose_pred = None
 
         # D. Predict future BEV.
