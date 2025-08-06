@@ -85,9 +85,28 @@ bev_h_ = 200
 bev_w_ = 200
 pred_height = 16
 
-use_ref_bev_for_future_bev = False
-use_future_bev_for_supervision=True
+# 将自回归的冻结住
+freeze_model_name = ['img_backbone', 'img_neck', 'pts_bbox_head', 'plan_head', 'future_pred_head']
+unfreeze_model_name = None
+use_simple_plan = True
+use_autoregressive_plan = True
+use_plan_query_distillation = True
+use_plan_feat_distillation = True
+loss_bev=dict(type='MSELoss', loss_weight=1.0)
 
+find_unused_parameters=False  #  pts_bbox_head_v2.code_weights.requires_grad alwarys is False
+
+use_reward_model = True   # 使用奖励模型
+output_multi_traj = True  # 输出多条轨迹
+sample_traj_nums = 20     # 采样轨迹数
+use_sim_reward = False    # 使用simulation reward
+use_im_reward = True      # 使用imitation reward
+sim_reward_nums = 1       # simulation reward head nums
+plan_query_nums = 1       # plan query nums
+future_reward_model_frame_idx = [1, 2, 3, 4, 5]
+plan_traj_for_sim_reward_epoch = 999999   # 这个是启动simulation reward的epoch
+random_select = True
+use_gt_occ_for_sim_reward = True
 model = dict(
     type='Drive_OccWorld',
     turn_on_flow=turn_on_flow,
@@ -97,19 +116,37 @@ model = dict(
     video_test_mode=True,
     only_generate_dataset=only_generate_dataset,
     supervise_all_future=supervise_all_future,
+    freeze_model_name=freeze_model_name,
+    unfreeze_model_name=unfreeze_model_name,
+    use_sim_reward=use_sim_reward,
+    use_im_reward=use_im_reward,
+    # Reward model config
+    use_reward_model=use_reward_model,
+    future_reward_model_frame_idx=future_reward_model_frame_idx,
+    reward_model=dict(
+        type='RewardConvNet',
+        bev_h=bev_h_,
+        bev_w=bev_w_,
+        hidden_dim=_dim_,
+        fut_traj_num=future_pred_frame_num_train,
+        sim_reward_nums=sim_reward_nums,
+        use_sim_reward=use_sim_reward,
+        use_im_reward=use_im_reward,
+    ),
     # BEV configuration.
     point_cloud_range=point_cloud_range,
     bev_h=bev_h_,
     bev_w=bev_w_,
 
+    use_simple_plan=use_simple_plan,
+    use_autoregressive_plan=use_autoregressive_plan,
+    use_plan_query_distillation=use_plan_query_distillation,
+    use_plan_feat_distillation=use_plan_feat_distillation,
+    loss_bev=loss_bev,
+
     # Predict frame num.
     future_pred_frame_num=future_pred_frame_num_train,
     test_future_frame_num=future_pred_frame_num_test,
-    
-    # loss
-    loss_bev=dict(type='MSELoss', loss_weight=1.0),
-    use_ref_bev_for_future_bev=use_ref_bev_for_future_bev,
-    use_future_bev_for_supervision=use_future_bev_for_supervision,
 
     img_backbone=dict(
         type='ResNet',
@@ -130,6 +167,248 @@ model = dict(
         add_extra_convs='on_output',
         num_outs=4,
         relu_before_extra_convs=True),
+    img_backbone_v2=dict(
+        type='ResNet',
+        depth=101,
+        num_stages=4,
+        out_indices=(1, 2, 3,),
+        frozen_stages=1,
+        norm_cfg=dict(type='BN2d', requires_grad=False),
+        norm_eval=True,
+        style='caffe',
+        dcn=dict(type='DCNv2', deform_groups=1, fallback_on_stride=False), # original DCNv2 will print log when perform load_state_dict
+        stage_with_dcn=(False, False, True, True)),
+    img_neck_v2=dict(
+        type='FPN',
+        in_channels=[512, 1024, 2048],
+        out_channels=_dim_,
+        start_level=0,
+        add_extra_convs='on_output',
+        num_outs=4,
+        relu_before_extra_convs=True),
+    future_pred_head_v2=dict(
+        type='WorldHeadV1',
+        num_classes=num_cls,
+        history_queue_length=queue_length,
+        memory_queue_len=memory_queue_len,
+        soft_weight=False,
+        turn_on_flow=False, # Occ Head
+        obj_motion_norm=False,
+        with_adapter=False,    # adapter for the fine-tune
+        adapter_cfg={'reduction': 8, 'n_blocks': 2},
+        pred_history_frame_num=world_head_pred_history_frame_num,
+        pred_future_frame_num=world_head_pred_future_frame_num,
+        per_frame_loss_weight=world_head_per_frame_loss_weight,
+
+        num_pred_fcs=1,  # head for point cloud prediction.
+        num_pred_height=pred_height,  # Predict BEV instead of 3D space occupancy.
+
+        use_can_bus=False,    # use future gt traj
+        use_plan_traj=True, # use future pred traj      4D-Occ-Pred: must use_plan_traj=True
+        use_command=True,
+        use_vel_steering=False,
+        use_vel=False,
+        use_steering=False,
+        use_fourier=False,
+        condition_ca_add='add',
+        can_bus_norm=True,
+        can_bus_dims=(0, 1, 2, 17),
+        bev_h=bev_h_,
+        bev_w=bev_w_,
+        pc_range=point_cloud_range,
+        loss_weight=frame_loss_weight,
+        loss_weight_cfg=dict(               # un-commented: multi-loss      commented: only CE-loss
+            loss_voxel_ce_weight=1.0,
+            loss_voxel_sem_scal_weight=1.0,
+            loss_voxel_geo_scal_weight=1.0,
+            loss_voxel_lovasz_weight=1.0,
+        ),
+        positional_encoding=dict(
+            type='LearnedPositionalEncoding',
+            num_feats=_pos_dim_,
+            row_num_embed=bev_h_,
+            col_num_embed=bev_w_,
+        ),
+        prev_render_neck=dict(
+            type='ConditionalNorm',
+            occ_flow='occ',
+            embed_dims=_dim_, 
+            sem_norm=True,
+            sem_gt_train=False,
+            ego_motion_ln=True,
+            obj_motion_ln=False,
+            pred_height=16, 
+            num_cls=num_cls,
+            num_pred_fcs=0,
+        ),
+        transformer=dict(
+            type='PredictionTransformer',
+            embed_dims=_dim_,
+            decoder=dict(
+                type='WorldDecoder',
+                num_layers=future_decoder_layer_num,
+                return_intermediate=True,
+                transformerlayers=dict(
+                    type='PredictionTransformerLayer',
+                    attn_cfgs=[
+                        # layer-1: deformable self-attention.
+                        dict(
+                            type='PredictionMSDeformableAttention',
+                            embed_dims=_dim_,
+                            num_levels=memory_queue_len,
+                        ),
+                        # layer-2: deformable cross-attention,
+                        dict(
+                            type='PredictionMSDeformableAttention',
+                            embed_dims=_dim_,
+                            num_levels=memory_queue_len),
+                        # layer-3: cross-attention with action condition,
+                        dict(
+                            type='GroupMultiheadAttention',
+                            embed_dims=_dim_,
+                            num_heads=8,
+                            dropout=0.1,
+                        ),
+                    ],
+                    feedforward_channels=_ffn_dim_,
+                    ffn_dropout=0.1,
+                    operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
+                                     'cross_attn_action', 'norm', 'ffn', 'norm'))
+            )),
+    ),
+    pts_bbox_head_v2=dict(
+        type='WorldBEVFormerHead',
+        bev_h=bev_h_,
+        bev_w=bev_w_,
+        num_query=900,
+        num_classes=num_cls,
+        in_channels=_dim_,
+        sync_cls_avg_factor=True,
+        with_box_refine=True,
+        as_two_stage=False,
+        transformer=dict(
+            type='PerceptionTransformer',
+            rotate_prev_bev=True,
+            use_shift=True,
+            use_can_bus=True,
+            embed_dims=_dim_,
+            encoder=dict(
+                type='CustomBEVFormerEncoder',
+                num_layers=6,   # 6
+                pc_range=point_cloud_range,
+                num_points_in_pillar=4,
+                return_intermediate=False,
+                transformerlayers=dict(
+                    type='BEVFormerLayerV2',
+                    attn_cfgs=[
+                        dict(
+                            type='TemporalSelfAttention',
+                            embed_dims=_dim_,
+                            num_levels=1),
+                        dict(
+                            type='SpatialCrossAttention',
+                            pc_range=point_cloud_range,
+                            deformable_attention=dict(
+                                type='MSDeformableAttention3D',
+                                embed_dims=_dim_,
+                                num_points=8,
+                                num_levels=_num_levels_),
+                            embed_dims=_dim_,
+                        )
+                    ],
+                    feedforward_channels=_ffn_dim_,
+                    ffn_dropout=0.1,
+                    operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
+                                     'ffn', 'norm'))),
+            # !!!!!!! DECODER NOT USED !!!!!!!
+            decoder=dict(
+                type='DetectionTransformerDecoder',
+                num_layers=6,
+                return_intermediate=True,
+                transformerlayers=dict(
+                    type='DetrTransformerDecoderLayer',
+                    attn_cfgs=[
+                        dict(
+                            type='MultiheadAttention',
+                            embed_dims=_dim_,
+                            num_heads=8,
+                            dropout=0.1),
+                         dict(
+                            type='CustomMSDeformableAttention',
+                            embed_dims=_dim_,
+                            num_levels=1),
+                    ],
+
+                    feedforward_channels=_ffn_dim_,
+                    ffn_dropout=0.1,
+                    operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
+                                     'ffn', 'norm')))),
+        bbox_coder=dict(
+            type='NMSFreeCoder',
+            post_center_range=[-61.2, -61.2, -10.0, 61.2, 61.2, 10.0],
+            pc_range=point_cloud_range,
+            max_num=300,
+            voxel_size=voxel_size,
+            num_classes=num_cls),
+        positional_encoding=dict(
+            type='LearnedPositionalEncoding',
+            num_feats=_pos_dim_,
+            row_num_embed=bev_h_,
+            col_num_embed=bev_w_,
+            ),
+        loss_cls=dict(
+            type='FocalLoss',
+            use_sigmoid=True,
+            gamma=2.0,
+            alpha=0.25,
+            loss_weight=2.0),
+        loss_bbox=dict(type='L1Loss', loss_weight=0.25),
+        loss_iou=dict(type='GIoULoss', loss_weight=0.0)),
+    plan_head_v2=dict(
+        type='PlanHead_v2',
+        with_adapter=True,
+        plan_grid_conf=plan_grid_conf,
+        bev_h=bev_h_,
+        bev_w=bev_w_,
+        transformer=dict(
+            type='PlanTransformer',
+            embed_dims=_dim_,
+            decoder=dict(
+                type='PlanDecoder',
+                num_layers=1,
+                return_intermediate=False,
+                transformerlayers=dict(
+                    type='PlanTransformerLayer',
+                    attn_cfgs=[
+                        # layer-1: temporal self-attention.
+                        dict(
+                            type='GroupMultiheadAttention',
+                            embed_dims=_dim_,
+                            num_heads=8,
+                            dropout=0.1,),
+                        # layer-2: spatial cross-attention,
+                        dict(
+                            type='GroupMultiheadAttention',
+                            embed_dims=_dim_,
+                            num_heads=8,
+                            dropout=0.1,),
+                    ],
+                    feedforward_channels=_ffn_dim_,
+                    ffn_dropout=0.1,
+                    operation_order=('self_attn', 'norm', 'cross_attn', 'norm', 'ffn', 'norm'))
+            )),
+        positional_encoding=dict(
+            type='LearnedPositionalEncoding',
+            num_feats=_pos_dim_,
+            row_num_embed=bev_h_,
+            col_num_embed=bev_w_,
+        ),
+        loss_planning=dict(type='PlanningLoss'),
+        loss_collision=[dict(type='CollisionLoss', delta=0.0, weight=2.5),
+                        dict(type='CollisionLoss', delta=0.5, weight=1.0),
+                        dict(type='CollisionLoss', delta=1.0, weight=0.25)],
+    ),    
+    
     future_pred_head=dict(
         type='WorldHeadV1',
         num_classes=num_cls,
@@ -312,6 +591,15 @@ model = dict(
         plan_grid_conf=plan_grid_conf,
         bev_h=bev_h_,
         bev_w=bev_w_,
+        output_multi_traj=output_multi_traj,
+        sample_traj_nums=sample_traj_nums,
+        random_select=random_select,
+        use_sim_reward=use_sim_reward,
+        use_im_reward=use_im_reward,
+        use_gt_occ_for_sim_reward=use_gt_occ_for_sim_reward,
+        plan_query_nums=plan_query_nums,
+        plan_traj_for_sim_reward_epoch=plan_traj_for_sim_reward_epoch,
+
         transformer=dict(
             type='PlanTransformer',
             embed_dims=_dim_,
@@ -350,6 +638,7 @@ model = dict(
                         dict(type='CollisionLoss', delta=0.5, weight=1.0),
                         dict(type='CollisionLoss', delta=1.0, weight=0.25)],
     ),    
+    
     # model training and testing settings
     train_cfg=dict(pts=dict(
         grid_size=[512, 512, 1],
@@ -384,8 +673,7 @@ train_pipeline = [
 
     dict(type='DefaultFormatBundle3D', class_names=class_names),
     dict(type='CustomCollect3D', keys=['img', 'aug_param', 'gt_occ', 'vel_steering',
-                                       'sdc_planning', 'sdc_planning_mask', 'command', 'sample_traj', 'gt_future_boxes',
-                                       'future_img', 'future_img_metas'])
+                                       'sdc_planning', 'sdc_planning_mask', 'command', 'sample_traj', 'gt_future_boxes'])
 ]
 
 test_pipeline = [
@@ -420,8 +708,6 @@ data = dict(
         ego_mask=(-0.8, -1.5, 0.8, 2.5),
         load_frame_interval=load_frame_interval,
         plan_grid_conf=plan_grid_conf,
-        future_aug=True,  # 对未来的img进行数据增强
-        load_future_img=True,
         # we use box_type_3d='LiDAR' in kitti and nuscenes dataset
         # and box_type_3d='Depth' in sunrgbd and scannet dataset.
         box_type_3d='LiDAR'),
@@ -479,7 +765,7 @@ lr_config = dict(
 
 evaluation = dict(interval=1, pipeline=test_pipeline)
 
-runner = dict(type='EpochBasedRunner', max_epochs=24)
+runner = dict(type='EpochBasedRunner', max_epochs=12)
 load_from = 'pretrained/r101_dcn_fcos3d_pretrain.pth'
 log_config = dict(
     interval=50,

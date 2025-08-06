@@ -82,18 +82,22 @@ class Drive_OccWorld(BEVFormer):
                  random_select_reward_model_frame=False,
                  use_sim_reward=False,  # for simulation reward
                  use_im_reward=False,  # for imitation reward
+                 sim_reward_weight=0.1,  # 得分比例
+                 im_reward_weight=1.0,
                  planning_metric_type='v2',
                  # 这里作者在uni2one中已经将gt的轨迹变为相对的轨迹了，所以需要设置为True
                  cumsum_for_gt_traj=True,  # 是否对gt轨迹进行累积求和, 默认开源的是True，但是对照了UniAD的代码，发现是不需要对gt轨迹进行累积求和的
                  freeze_reward_input=False,
                  loss_bev=None,
                  use_ref_bev_for_future_bev=False,
+                 use_future_bev_for_supervision=False,  # 用于future img的蒸馏
 
                  use_simple_plan=False,  # v2
                  use_autoregressive_plan=True,  # v1
-                 use_plan_feat_distillation=False,   # v1  用于bev特征的蒸馏
+                 use_plan_feat_distillation=False,   # v1  用于plan bev特征的蒸馏
+                 plan_feat_distillation_method="fusion_adapter",
                  use_plan_query_distillation=False,  # v1  用于plan query的蒸馏
-                 use_future_img_distillation=False,  #     用于future img的蒸馏
+                 
                  *args,
                  **kwargs,):
 
@@ -106,6 +110,8 @@ class Drive_OccWorld(BEVFormer):
             self.reward_model = builder.build_head(reward_model)
             self.use_sim_reward = use_sim_reward
             self.use_im_reward = use_im_reward
+            self.sim_reward_weight = sim_reward_weight
+            self.im_reward_weight = im_reward_weight
         self.future_reward_model_frame_idx = future_reward_model_frame_idx if future_reward_model_frame_idx is not None else [future_pred_frame_num]
         self.random_select_reward_model_frame = random_select_reward_model_frame
         self.training_epoch = 0
@@ -113,15 +119,19 @@ class Drive_OccWorld(BEVFormer):
 
         self.loss_bev = builder.build_loss(loss_bev) if loss_bev is not None else None
         self.use_ref_bev_for_future_bev = use_ref_bev_for_future_bev
+        self.use_future_bev_for_supervision = use_future_bev_for_supervision
 
         self.use_simple_plan = use_simple_plan
         self.use_autoregressive_plan = use_autoregressive_plan
         self.use_plan_feat_distillation = use_plan_feat_distillation
         self.use_plan_query_distillation = use_plan_query_distillation
-        self.use_future_img_distillation = use_future_img_distillation
+        self.plan_feat_distillation_method = plan_feat_distillation_method
+        self.use_fusion_adapter = True if plan_feat_distillation_method == "fusion_adapter" else False
 
-        if self.use_plan_feat_distillation:
+        if self.use_plan_feat_distillation and self.use_fusion_adapter:
             self.temporal_fusion_adapter = TemporalFusionAdapter(in_channels=256, n_future=future_pred_frame_num + 1)
+        else:
+            self.temporal_fusion_adapter = None
         
         # occ head
         if future_pred_head is not None:
@@ -519,7 +529,8 @@ class Drive_OccWorld(BEVFormer):
                 max_reward_idx = all_rewards.argmax()
                 pose_pred = pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
             elif self.use_im_reward and self.use_sim_reward and im_traj_rewards is not None and sim_rewards is not None:
-                all_rewards = im_reward_targets + sim_rewards.mean(dim=0).unsqueeze(0)
+                # 加权reward
+                all_rewards = self.im_reward_weight * im_reward_targets + self.sim_reward_weight * sim_rewards.mean(dim=0).unsqueeze(0)
                 max_reward_idx = all_rewards.argmax()
                 pose_pred = pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
             else:
@@ -1234,10 +1245,10 @@ class Drive_OccWorld(BEVFormer):
 
 
             # D7. future bev feat
-            if self.loss_bev is not None and future_img_metas is not None and future_img is not None:
+            if self.loss_bev is not None  and self.use_future_bev_for_supervision and future_img_metas is not None and future_img is not None:
                 assert len(future_img) == len(future_img_metas) == 1, "only support bs=1 for now"
                 future_img_metas = [[each.data] for each in future_img_metas[0]][1:]
-                # 需要更新对应的can_bus
+                # 需要更新对应的can_bus，为什么要更新呢？
                 for i in range(len(future_img_metas)):
                     future_img_metas[i][0]['can_bus'] = img_metas[0]['future_can_bus'][i+1]
                     future_img_metas[i][0]['aug_param'] = img_metas[0]['aug_param']
@@ -1290,7 +1301,7 @@ class Drive_OccWorld(BEVFormer):
             losses.update(losses_reward=losses_reward * 0.1)
 
         # E6. Compute loss for bev distillation
-        if self.loss_bev is not None and self.use_future_img_distillation and future_img_metas is not None and future_img is not None:
+        if self.loss_bev is not None and self.use_future_bev_for_supervision and future_img_metas is not None and future_img is not None:
             pred_future_bev_feat_ = torch.stack([each[-1] for each in pred_future_bev_feat], 0)
             pred_future_bev_feat_ = pred_future_bev_feat_.squeeze(1)[1:].contiguous()
             losses_bev_distillation = self.loss_bev(pred_future_bev_feat_, future_bev_feats_gt.detach())
@@ -1303,7 +1314,16 @@ class Drive_OccWorld(BEVFormer):
                 # 如果是使用自回归的结果去蒸馏，则用这个
                 # pred_future_bev_feat: (6, 3, bs, HxW, C)->(bs, 6, HxW, C)
                 pred_future_bev_feat_ = torch.stack([each[-1] for each in pred_future_bev_feat], 0).permute(1, 0, 2, 3).contiguous()
-                pred_future_bev_feat_ = self.temporal_fusion_adapter(pred_future_bev_feat_)
+                if self.plan_feat_distillation_method == "fusion_adapter":
+                    pred_future_bev_feat_ = self.temporal_fusion_adapter(pred_future_bev_feat_)
+                elif self.plan_feat_distillation_method == "mean":
+                    pred_future_bev_feat_ = torch.mean(pred_future_bev_feat_, dim=1)
+                elif self.plan_feat_distillation_method == "max":
+                    pred_future_bev_feat_ = torch.max(pred_future_bev_feat_, dim=1)
+                elif isinstance(self.plan_feat_distillation_method, int):
+                    pred_future_bev_feat_ = pred_future_bev_feat_[:, self.plan_feat_distillation_method, ...]
+                else:
+                    raise ValueError(f"plan_feat_distillation_method: {self.plan_feat_distillation_method} is not supported")
             else:
                 pred_future_bev_feat_ = None
             if self.use_plan_query_distillation and plan_query_list is not None:
