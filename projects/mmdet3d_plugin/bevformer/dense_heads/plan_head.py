@@ -184,6 +184,7 @@ class PlanHead_v1(BaseModule):
                  random_select=False,
                  sim_reward_nums=1,
                  convert_bs_mode=True, # 在计算多模轨迹时，是否需要转换为bs模式，经过测试，True时，计算结果会更好
+                 return_adapter_bev_feats=False,  # 是否返回调整后的bev feat作为reward model的输入，这个要为False
                  *args,
                  **kwargs):
 
@@ -201,6 +202,8 @@ class PlanHead_v1(BaseModule):
         self.use_gt_occ_for_sim_reward = use_gt_occ_for_sim_reward
         self.sim_reward_nums = sim_reward_nums
         self.convert_bs_mode = convert_bs_mode
+        self.return_adapter_bev_feats = return_adapter_bev_feats
+
         # cls
         self.instance_cls = torch.tensor(instance_cls, requires_grad=False)  # 'bicycle', 'bus', 'car', 'construction', 'motorcycle', 'pedestrian', 'trailer', 'truck'
         self.drivable_area_cls = torch.tensor(drivable_area_cls, requires_grad=False)  # 'drivable_area'
@@ -541,9 +544,9 @@ class PlanHead_v1(BaseModule):
                     # 使用预测的多模轨迹来计算sim_reward（加这个的原因是，尝试用预测的结果来计算sim_reward）
                     sim_rewards = self.cal_sim_reward(next_pose.detach().clone().transpose(1, 0), gt_trajs, None, instance_occupancy, drivable_area)
             if return_plan_query:
-                return next_pose, loss, select_traj_.to(torch.float32), sim_rewards, plan_query
+                return next_pose, loss, select_traj_.to(torch.float32), sim_rewards, plan_query, rearrange(bev_feats, 'b (w h) c -> b c h w')
             else:
-                return next_pose, loss, select_traj_.to(torch.float32), sim_rewards, None
+                return next_pose, loss, select_traj_.to(torch.float32), sim_rewards, None, rearrange(bev_feats, 'b (w h) c -> b c h w')
         else:
             # select_traj
             select_traj = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area)  # B,3

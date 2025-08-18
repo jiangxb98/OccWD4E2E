@@ -495,10 +495,13 @@ class Drive_OccWorld(BEVFormer):
 
     def plan_with_reward(self, bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj):
         # 这里需要改成可以控制只使用imitation reward或者simulation reward或者两者都使用
-        pose_pred, pose_loss, multi_traj, sim_rewards, plan_query = self.plan_head(bev, sample_traj, sem_occupancy, 
+        pose_pred, pose_loss, multi_traj, sim_rewards, plan_query, adapter_bev_feats = self.plan_head(bev, sample_traj, sem_occupancy, 
                                                                        command, real_traj, is_multi_traj, 
                                                                        self.training_epoch, self.use_plan_query_distillation)
-        im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(bev, pose_pred)  # simtraj_rewards shape: B*self.sim_reward_nums, sample_num
+        if self.plan_head.return_adapter_bev_feats:
+            im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(bev, pose_pred)  # simtraj_rewards shape: B*self.sim_reward_nums, sample_num
+        else:
+            im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(adapter_bev_feats, pose_pred)  # simtraj_rewards shape: B*self.sim_reward_nums, sample_num
         # 将sim_rewards和sim_traj_rewards转换为0-1之间的值
         # sim_rewards = sim_rewards.sigmoid() if sim_rewards is not None else None
         sim_traj_rewards = sim_traj_rewards.sigmoid() if sim_traj_rewards is not None else None
