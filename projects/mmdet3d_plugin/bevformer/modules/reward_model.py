@@ -2,9 +2,76 @@ import numpy as np
 import torch
 import torch.nn as nn
 from mmdet.models.builder import BACKBONES
-from ..dense_heads import BevFeatureSlicer
 import copy
 from einops import rearrange
+import torch.nn.functional as F
+
+def calculate_birds_eye_view_parameters(x_bounds, y_bounds, z_bounds):
+    """
+    Parameters
+    ----------
+        x_bounds: Forward direction in the ego-car.
+        y_bounds: Sides
+        z_bounds: Height
+
+    Returns
+    -------
+        bev_resolution: Bird's-eye view bev_resolution
+        bev_start_position Bird's-eye view first element
+        bev_dimension Bird's-eye view tensor spatial dimension
+    """
+    bev_resolution = torch.tensor(
+        [row[2] for row in [x_bounds, y_bounds, z_bounds]])
+    bev_start_position = torch.tensor(
+        [row[0] + row[2] / 2.0 for row in [x_bounds, y_bounds, z_bounds]])
+    bev_dimension = torch.tensor([(row[1] - row[0]) / row[2]
+                                 for row in [x_bounds, y_bounds, z_bounds]], dtype=torch.long)
+
+    return bev_resolution, bev_start_position, bev_dimension
+
+# Grid sampler
+# Sample a smaller receptive-field bev from larger one
+class BevFeatureSlicer(nn.Module):
+    def __init__(self, grid_conf, map_grid_conf):
+        super().__init__()
+        if grid_conf == map_grid_conf:
+            self.identity_mapping = True
+        else:
+            self.identity_mapping = False
+
+            bev_resolution, bev_start_position, bev_dimension= calculate_birds_eye_view_parameters(
+                grid_conf['xbound'], grid_conf['ybound'], grid_conf['zbound']
+            )
+
+            map_bev_resolution, map_bev_start_position, map_bev_dimension = calculate_birds_eye_view_parameters(
+                map_grid_conf['xbound'], map_grid_conf['ybound'], map_grid_conf['zbound']
+            )
+
+            self.map_x = torch.arange(
+                map_bev_start_position[0], map_grid_conf['xbound'][1], map_bev_resolution[0])
+
+            self.map_y = torch.arange(
+                map_bev_start_position[1], map_grid_conf['ybound'][1], map_bev_resolution[1])
+
+            # convert to normalized coords
+            self.norm_map_x = self.map_x / (- bev_start_position[0])
+            self.norm_map_y = self.map_y / (- bev_start_position[1])
+
+            tmp_m, tmp_n = torch.meshgrid(
+                self.norm_map_x, self.norm_map_y)  # indexing 'ij'
+            tmp_m, tmp_n = tmp_m.T, tmp_n.T  # change it to the 'xy' mode results
+
+            self.map_grid = torch.stack([tmp_m, tmp_n], dim=2)
+
+    def forward(self, x):
+        # x: bev feature map tensor of shape (b, c, h, w)
+        if self.identity_mapping:
+            return x
+        else:
+            grid = self.map_grid.unsqueeze(0).type_as(
+                x).repeat(x.shape[0], 1, 1, 1)
+
+            return F.grid_sample(x, grid=grid, mode='bilinear', align_corners=True)
 
 @BACKBONES.register_module()
 class RewardConvNet(nn.Module):
@@ -538,13 +605,11 @@ class RewardConvNet_v2(nn.Module):
         fut_bev_feature = fut_bev_feature.permute(0, 3, 1, 2)
         # 展平traj
         num_traj, planning_steps, _ = traj.shape
-        traj_feats = traj.reshape(-1, 2)  # [bs*num_traj, 2]
-
-        # 建议这里额外加一个transformer,对fut_bev_feature进行处理，和traj_feats进行交互
-
+        traj_feats = traj.reshape(bs, num_traj, 2)  # [bs*num_traj, 2]
 
         reward_feats = self.conv_reward_net(fut_bev_feature)  # [bs, 256, 1, 1]
-        traj_feats = self.trajectory_single_encoder(traj_feats)  # [bs*num_traj, 256]
+        reward_feats = reward_feats.squeeze(2).squeeze(2).unsqueeze(1)
+        traj_feats = self.trajectory_single_encoder(traj_feats)  # [bs, num_traj, 256]
         # WOTE 额外加了个transformer
         traj_feats = self.cluster_encoder(traj_feats)
 
@@ -553,7 +618,7 @@ class RewardConvNet_v2(nn.Module):
             # reward_feats 和 traj_feats 进行attention交互
             # query 是traj_feats，key和value是reward_feats
             enhanced_feats = self.cross_attention_transformer(traj_feats, reward_feats)
-            x_cat = self.cat_encoder(torch.cat([reward_feats, enhanced_feats], dim=1))
+            x_cat = self.cat_encoder(torch.cat([traj_feats, enhanced_feats], dim=2))
         else:
             reward_feats = reward_feats.repeat(bs*num_traj, 1, 1, 1).squeeze(-1).squeeze(-1)
             x_cat = self.cat_encoder(torch.cat([reward_feats, traj_feats], dim=1))
