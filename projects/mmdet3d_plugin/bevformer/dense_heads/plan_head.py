@@ -342,7 +342,11 @@ class PlanHead_v1(BaseModule):
         cost = self.cost_function.forward_sim(trajs[:,:,:2], instance_occupancy, drivable_area, self.sim_reward_nums)
 
         if self.sim_reward_nums == 1:
-            cost = cost
+            # cost = cost
+            pos_mask = cost <= 0
+            neg_mask = cost > 0
+            cost[pos_mask] = 1
+            cost[neg_mask] = 0
         elif self.sim_reward_nums == 3:
             for i in range(self.sim_reward_nums):
                 # cost=0表示没有碰撞

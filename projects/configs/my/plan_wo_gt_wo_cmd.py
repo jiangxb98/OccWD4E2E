@@ -142,7 +142,7 @@ model = dict(
 
         use_can_bus=False,    # use future gt traj
         use_plan_traj=True, # use future pred traj      4D-Occ-Pred: must use_plan_traj=True
-        use_command=True,
+        use_command=False,
         use_vel_steering=False,
         use_vel=False,
         use_steering=False,

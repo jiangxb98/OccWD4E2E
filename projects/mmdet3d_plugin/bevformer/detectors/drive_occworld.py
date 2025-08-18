@@ -536,14 +536,14 @@ class Drive_OccWorld(BEVFormer):
             else:
                 pass
             if max_reward_idx is not None and plan_query is not None:
-                plan_query = plan_query[max_reward_idx].unsqueeze(0)
+                plan_query = plan_query[:, max_reward_idx].unsqueeze(1)
         else:
             # max the im_traj_rewards + sim_traj_rewards
             all_rewards = 0
             if im_traj_rewards is not None:
-                all_rewards = all_rewards + im_traj_rewards
+                all_rewards = all_rewards + self.im_reward_weight * im_traj_rewards
             if sim_traj_rewards is not None:
-                all_rewards = all_rewards + sim_traj_rewards.mean(dim=0)
+                all_rewards = all_rewards + self.sim_reward_weight * sim_traj_rewards.mean(dim=0).unsqueeze(0)
             max_reward_idx = all_rewards.argmax()
             pose_pred = pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
             im_reward_loss = None
