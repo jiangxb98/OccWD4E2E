@@ -414,6 +414,23 @@ class Drive_OccWorld(BEVFormer):
         # 1. get future2ref and ref2future_matrix of frame_idx.
         future2ref = [img_meta['future2ref_lidar_transform'][frame_idx] for img_meta in img_metas]
         future2ref = ref_to_history_list.new_tensor(np.array(future2ref))
+
+        # 原始future2ref是4×4变换矩阵
+        # future2ref = [
+        #     [r11, r12, r13, tx],
+        #     [r21, r22, r23, ty], 
+        #     [r31, r32, r33, tz],
+        #     [0,   0,   0,   1 ]
+        # ]
+        # # 转置后
+        # future2ref = [
+        #     [r11, r21, r31, 0 ],
+        #     [r12, r22, r32, 0 ],
+        #     [r13, r23, r33, 0 ],
+        #     [tx,  ty,  tz,  1 ]
+        # ]
+        # 然后更新 tx, ty
+
         # use translation_xy
         if self.future_pred_head.use_plan_traj:
             future2ref = future2ref.transpose(-1, -2)
@@ -499,13 +516,13 @@ class Drive_OccWorld(BEVFormer):
                                                                        command, real_traj, is_multi_traj, 
                                                                        self.training_epoch, self.use_plan_query_distillation)
         if self.plan_head.return_adapter_bev_feats:
-            im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(bev, pose_pred)  # simtraj_rewards shape: B*self.sim_reward_nums, sample_num
-        else:
             im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(adapter_bev_feats, pose_pred)  # simtraj_rewards shape: B*self.sim_reward_nums, sample_num
+        else:
+            im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(bev, pose_pred)  # simtraj_rewards shape: B*self.sim_reward_nums, sample_num
         # 将sim_rewards和sim_traj_rewards转换为0-1之间的值
         # sim_rewards = sim_rewards.sigmoid() if sim_rewards is not None else None
         sim_traj_rewards = sim_traj_rewards.sigmoid() if sim_traj_rewards is not None else None
-
+        
         if self.training:
             if im_traj_rewards is not None and self.use_im_reward:
                 # 1. im_loss gt的loss
@@ -837,6 +854,7 @@ class Drive_OccWorld(BEVFormer):
         # preds
         occ_preds = occ_preds.permute(1, 0, 3, 2, 6, 4, 5).squeeze(3)
         inter_num, select_frames, bs, num_cls, hw, d = occ_preds.shape
+        # 特别注意这里的transpose，是transpose(3,4),交换了bev_w和bev_h，因为网络的bev是uniad那一套，但预测结果是用的lidar坐标系这一套！
         occ_preds = occ_preds.view(inter_num, select_frames*bs, num_cls, self.bev_w, self.bev_h, d).transpose(3,4)
         # gts
         if method == 'v1':

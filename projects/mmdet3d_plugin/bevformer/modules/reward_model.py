@@ -402,8 +402,8 @@ class RewardConvNet_v2(nn.Module):
                  sim_reward_nums: int = 0,
                  use_sim_reward: bool = False,
                  use_im_reward: bool = False,
-                 extra_bev_adapter: bool = False,
-                 use_cross_attention: bool = False):
+                 extra_bev_adapter: bool = True,
+                 use_cross_attention: bool = True):
         super(RewardConvNet_v2, self).__init__()
         
         self.bev_h = bev_h

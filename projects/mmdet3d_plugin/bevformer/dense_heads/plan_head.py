@@ -544,9 +544,9 @@ class PlanHead_v1(BaseModule):
                     # 使用预测的多模轨迹来计算sim_reward（加这个的原因是，尝试用预测的结果来计算sim_reward）
                     sim_rewards = self.cal_sim_reward(next_pose.detach().clone().transpose(1, 0), gt_trajs, None, instance_occupancy, drivable_area)
             if return_plan_query:
-                return next_pose, loss, select_traj_.to(torch.float32), sim_rewards, plan_query, rearrange(bev_feats, 'b (w h) c -> b c h w')
+                return next_pose, loss, select_traj_.to(torch.float32), sim_rewards, plan_query, bev_feats
             else:
-                return next_pose, loss, select_traj_.to(torch.float32), sim_rewards, None, rearrange(bev_feats, 'b (w h) c -> b c h w')
+                return next_pose, loss, select_traj_.to(torch.float32), sim_rewards, None, bev_feats
         else:
             # select_traj
             select_traj = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area)  # B,3
