@@ -96,6 +96,17 @@ loss_bev=dict(type='MSELoss', loss_weight=1.0)
 
 find_unused_parameters=False  #  pts_bbox_head_v2.code_weights.requires_grad alwarys is False
 
+use_reward_model = True   # 使用奖励模型
+output_multi_traj = True  # 输出多条轨迹
+sample_traj_nums = 20     # 采样轨迹数
+use_sim_reward = False    # 使用simulation reward
+use_im_reward = True      # 使用imitation reward
+sim_reward_nums = 1       # simulation reward head nums
+plan_query_nums = 1       # plan query nums
+future_reward_model_frame_idx = [1, 2, 3, 4, 5]
+plan_traj_for_sim_reward_epoch = 999999   # 这个是启动simulation reward的epoch
+random_select = True
+use_gt_occ_for_sim_reward = True
 model = dict(
     type='Drive_OccWorld',
     turn_on_flow=turn_on_flow,
@@ -107,6 +118,21 @@ model = dict(
     supervise_all_future=supervise_all_future,
     freeze_model_name=freeze_model_name,
     unfreeze_model_name=unfreeze_model_name,
+    use_sim_reward=use_sim_reward,
+    use_im_reward=use_im_reward,
+    # Reward model config
+    use_reward_model=use_reward_model,
+    future_reward_model_frame_idx=future_reward_model_frame_idx,
+    reward_model=dict(
+        type='RewardConvNet',
+        bev_h=bev_h_,
+        bev_w=bev_w_,
+        hidden_dim=_dim_,
+        fut_traj_num=future_pred_frame_num_train,
+        sim_reward_nums=sim_reward_nums,
+        use_sim_reward=use_sim_reward,
+        use_im_reward=use_im_reward,
+    ),
     # BEV configuration.
     point_cloud_range=point_cloud_range,
     bev_h=bev_h_,
@@ -565,6 +591,15 @@ model = dict(
         plan_grid_conf=plan_grid_conf,
         bev_h=bev_h_,
         bev_w=bev_w_,
+        output_multi_traj=output_multi_traj,
+        sample_traj_nums=sample_traj_nums,
+        random_select=random_select,
+        use_sim_reward=use_sim_reward,
+        use_im_reward=use_im_reward,
+        use_gt_occ_for_sim_reward=use_gt_occ_for_sim_reward,
+        plan_query_nums=plan_query_nums,
+        plan_traj_for_sim_reward_epoch=plan_traj_for_sim_reward_epoch,
+
         transformer=dict(
             type='PlanTransformer',
             embed_dims=_dim_,
