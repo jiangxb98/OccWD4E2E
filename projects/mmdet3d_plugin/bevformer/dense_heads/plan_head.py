@@ -466,9 +466,9 @@ class PlanHead_v1(BaseModule):
             # select_traj_ = cur_trajs[torch.randperm(cur_trajs.shape[1])[:, :self.sample_traj_nums]]
 
             # select_traj -> encoder
-            select_traj = self.pose_encoder(select_traj_.float())   # B,1,C
+            select_traj = self.pose_encoder(select_traj_.float())   # B, sample_traj_nums, C
             if self.convert_bs_mode:
-                select_traj = select_traj.permute(1, 0, 2)  # 6，b, c
+                select_traj = select_traj.permute(1, 0, 2)  # shape: sample_traj_nums, B, C
 
             # bev refine
             bs = bev_feats.shape[0]
@@ -539,6 +539,7 @@ class PlanHead_v1(BaseModule):
             if self.use_sim_reward and self.training:
                 if training_epoch < self.plan_traj_for_sim_reward_epoch:
                     # 使用初始化的多模轨迹来计算sim_reward
+                    # select_traj_: bs, sample_traj_nums, 2
                     sim_rewards = self.cal_sim_reward(select_traj_, gt_trajs, None, instance_occupancy, drivable_area)
                 else:
                     # 使用预测的多模轨迹来计算sim_reward（加这个的原因是，尝试用预测的结果来计算sim_reward）

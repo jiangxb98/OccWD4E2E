@@ -1043,12 +1043,12 @@ class Drive_OccWorld(BEVFormer):
             if isinstance(predefine_multi_traj_v1, list):  # [1, 20, 1, 2/3]-->[1, times, 20, 1, 2/3]-->[1, times, 20, 2/3]
                 predefine_multi_traj_v1 = torch.stack(predefine_multi_traj_v1, dim=1).squeeze(3)
             if isinstance(pred_multi_traj_v1, list):  # [1, 20, 1, 2/3]  -> [1, times, 20, 1, 2/3]  -> [1, times, 20, 2/3]
-                pred_multi_traj_v1 = torch.cat(pred_multi_traj_v1, dim=1).squeeze(3)
+                pred_multi_traj_v1 = torch.stack(pred_multi_traj_v1, dim=1).squeeze(3)
             if isinstance(im_reward_targets_v1, list):  # [1,20]  -> [1, times, 20]
-                im_reward_targets_v1 = torch.cat(im_reward_targets_v1, dim=1)
+                im_reward_targets_v1 = torch.stack(im_reward_targets_v1, dim=1)
             # 根据self.future_reward_model_frame_idx来选择pred_multi_traj_v2和fused_future_bev_feat
-            pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]
-            future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]
+            pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]  # 1, times, 2/3
+            future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]  # [1, times, 40000, 256]
             losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_)
             losses.update(losses_distill_traj_reward=losses_distill_traj_reward)
 
@@ -1382,20 +1382,20 @@ class Drive_OccWorld(BEVFormer):
             losses.update(losses_bev_distillation=losses_bev_distillation)
 
         # E7. Compute loss for plan distillation (transfer learning)
-
+        pred_future_bev_feat_last = torch.stack([each[-1] for each in pred_future_bev_feat], 0).permute(1, 0, 2, 3).contiguous()
         if self.use_simple_plan:
             if self.use_plan_feat_distillation:
                 # 如果是使用自回归的结果去蒸馏，则用这个
                 # pred_future_bev_feat: (6, 3, bs, HxW, C)->(bs, 6, HxW, C)
-                pred_future_bev_feat_ = torch.stack([each[-1] for each in pred_future_bev_feat], 0).permute(1, 0, 2, 3).contiguous()
+                
                 if self.plan_feat_distillation_method == "fusion_adapter":
-                    pred_future_bev_feat_ = self.temporal_fusion_adapter(pred_future_bev_feat_)
+                    pred_future_bev_feat_ = self.temporal_fusion_adapter(pred_future_bev_feat_last)
                 elif self.plan_feat_distillation_method == "mean":
-                    pred_future_bev_feat_ = torch.mean(pred_future_bev_feat_, dim=1)
+                    pred_future_bev_feat_ = torch.mean(pred_future_bev_feat_last, dim=1)
                 elif self.plan_feat_distillation_method == "max":
-                    pred_future_bev_feat_ = torch.max(pred_future_bev_feat_, dim=1)
+                    pred_future_bev_feat_ = torch.max(pred_future_bev_feat_last, dim=1)
                 elif isinstance(self.plan_feat_distillation_method, int):
-                    pred_future_bev_feat_ = pred_future_bev_feat_[:, self.plan_feat_distillation_method, ...]
+                    pred_future_bev_feat_ = pred_future_bev_feat_last[:, self.plan_feat_distillation_method, ...]
                 else:
                     raise ValueError(f"plan_feat_distillation_method: {self.plan_feat_distillation_method} is not supported")
             else:
@@ -1415,7 +1415,7 @@ class Drive_OccWorld(BEVFormer):
                 im_reward_targets_list.insert(0, im_reward_targets)
 
             return losses, pred_future_bev_feat_, img_feats_for_simple_plan, prev_bev_for_simple_plan, plan_query_list, \
-                predefine_multi_traj_list, pred_multi_traj_list, im_reward_targets_list, pred_future_bev_feat_
+                predefine_multi_traj_list, pred_multi_traj_list, im_reward_targets_list, pred_future_bev_feat_last
         else:
             return losses, None, None, None, None
 

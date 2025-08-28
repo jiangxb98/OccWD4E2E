@@ -84,7 +84,8 @@ class RewardConvNet(nn.Module):
                  sim_reward_nums: int = 0,
                  use_sim_reward: bool = False,
                  use_im_reward: bool = False,
-                 extra_bev_adapter: bool = False):
+                 extra_bev_adapter: bool = False,
+                 ):
         super(RewardConvNet, self).__init__()
         
         self.bev_h = bev_h
@@ -249,7 +250,7 @@ class RewardConvNet(nn.Module):
 
         Args:
             fut_bev_feature (torch.Tensor): Future BEV feature, shape [bs, bev_h*bev_w, dims]
-            traj (torch.Tensor): Trajectory, shape [batch_size*num_traj, planning_steps, 2]
+            traj (torch.Tensor): Trajectory, shape [batch_size, num_traj, planning_steps, 2]
         Returns:
             torch.Tensor: Scoring features, shape [batch_size*num_traj, 128, 1, 1]
         """
@@ -301,7 +302,7 @@ class RewardConvNet(nn.Module):
 
         return im_traj_scores, sim_traj_scores
 
-    def reward_distillation_alignment(self, model_a_trajectories, model_b_trajectory, fut_bev_feature):
+    def reward_distillation_alignment(self, model_a_trajectories, model_b_trajectory, fut_bev_feature, return_distance_loss=False):
         """
         使用reward蒸馏实现跨模型对齐
         
@@ -336,17 +337,21 @@ class RewardConvNet(nn.Module):
         # 使用reward model评估模型a的轨迹
         im_traj_scores_a_list = []
         for i in range(times):
-            reward_feats_i = reward_feats[:, i, ...].squeeze(-1).squeeze(-1)
-            x_cat_i = self.cat_encoder(torch.cat([reward_feats_i, model_a_trajectories_embed[:, i, ...]], dim=1))
+            reward_feats_i = reward_feats[:, i, ...].repeat(bs*num_traj, 1, 1, 1).squeeze(-1).squeeze(-1)
+            x_cat_i = self.cat_encoder(torch.cat([reward_feats_i, model_a_trajectories_embed[:, i, ...].reshape(bs*num_traj, -1)], dim=1))
             x_i = self.reward_head(x_cat_i)
             im_traj_scores_a_i = x_i.reshape(bs, num_traj)
             im_traj_scores_a_list.append(im_traj_scores_a_i)
-        im_traj_scores_a = torch.cat(im_traj_scores_a_list, dim=1)  # [bs, times, num_traj]
+        im_traj_scores_a = torch.stack(im_traj_scores_a_list, dim=1)  # [bs, times, num_traj]
         # 选择最大的reward轨迹的索引
         best_traj_idx = torch.argmax(im_traj_scores_a, dim=2)  # [bs, times]
-        best_traj_a = model_a_trajectories[torch.arange(bs), best_traj_idx]  # [bs, times, 2]
-        # 计算模型B轨迹与最佳轨迹A的距离
-        distance_loss = torch.norm(model_b_trajectory - best_traj_a, dim=1).mean()
+        best_traj_a = model_a_trajectories[:, torch.arange(times), best_traj_idx.squeeze(0)]  # [bs, times, 2]
+        
+        if return_distance_loss:
+            # 计算模型B轨迹与最佳轨迹A的距离
+            distance_loss = torch.norm(model_b_trajectory - best_traj_a, dim=1).mean()
+        else:
+            distance_loss = 0
         
         
         # 4. Reward对齐损失：让模型B的轨迹获得与最佳轨迹A相同的reward
@@ -356,11 +361,11 @@ class RewardConvNet(nn.Module):
             reward_feats_i = reward_feats[:, i, ...].squeeze(-1).squeeze(-1)
             x_cat_i = self.cat_encoder(torch.cat([reward_feats_i, model_b_trajectory_embed[:, i, ...]], dim=1))
             x_i = self.reward_head(x_cat_i)
-            im_traj_scores_b_i = x_i.reshape(bs, num_traj)
+            im_traj_scores_b_i = x_i.reshape(bs, 1)  # bs, 1
             im_traj_scores_b_list.append(im_traj_scores_b_i)
-        im_traj_scores_b = torch.cat(im_traj_scores_b_list, dim=1)  # [bs, times, num_traj]
+        im_traj_scores_b = torch.stack(im_traj_scores_b_list, dim=1)  # [bs, times, 1]
         # 得到模型A最佳轨迹的reward
-        best_traj_a_reward = im_traj_scores_a[torch.arange(bs), best_traj_idx]  # [bs, times]
+        best_traj_a_reward = im_traj_scores_a[:, torch.arange(times), best_traj_idx.squeeze(0)]  # [bs, times]
         
         # Reward对齐损失
         reward_alignment_loss = torch.nn.functional.mse_loss(im_traj_scores_b, best_traj_a_reward)  # [bs, times]
