@@ -5,7 +5,7 @@ from typing import Dict
 def compute_im_reward_loss(
     gt_trajectory: torch.Tensor,  # bs, num_traj, 2/3
     prediction_rewards,  # bs, num_traj, 1
-    trajectory_samples,  # bs, sample_traj_nums, 2/3
+    trajectory_samples,  # bs, sample_traj_nums, planning_steps, 2/3
 ) -> torch.Tensor:
     """
     Compute the reward loss for the reward model.

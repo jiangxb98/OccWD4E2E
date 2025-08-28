@@ -515,6 +515,8 @@ class Drive_OccWorld(BEVFormer):
 
     def plan_with_reward(self, bev, sample_traj, sem_occupancy, command, real_traj, is_multi_traj):
         # 这里需要改成可以控制只使用imitation reward或者simulation reward或者两者都使用
+        # multi_pose_pred: [bs, sample_traj_nums, planning_steps, 2]
+        # multi_traj:      [bs, sample_traj_nums, planning_steps, 2]
         multi_pose_pred, pose_loss, multi_traj, sim_rewards, plan_query, adapter_bev_feats = self.plan_head(bev, sample_traj, sem_occupancy, 
                                                                        command, real_traj, is_multi_traj, 
                                                                        self.training_epoch, self.use_plan_query_distillation)
@@ -548,16 +550,16 @@ class Drive_OccWorld(BEVFormer):
             if self.use_im_reward and not self.use_sim_reward and im_traj_rewards is not None:
                 all_rewards = im_reward_targets
                 max_reward_idx = all_rewards.argmax()
-                pose_pred = multi_pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
+                pose_pred = multi_pose_pred[:, max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
             elif self.use_sim_reward and not self.use_im_reward and sim_rewards is not None:
                 all_rewards = sim_rewards.mean(dim=0).unsqueeze(0)
                 max_reward_idx = all_rewards.argmax()
-                pose_pred = multi_pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
+                pose_pred = multi_pose_pred[:,max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
             elif self.use_im_reward and self.use_sim_reward and im_traj_rewards is not None and sim_rewards is not None:
                 # 加权reward
                 all_rewards = self.im_reward_weight * im_reward_targets + self.sim_reward_weight * sim_rewards.mean(dim=0).unsqueeze(0)
                 max_reward_idx = all_rewards.argmax()
-                pose_pred = multi_pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
+                pose_pred = multi_pose_pred[:,max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
             else:
                 pass
             if max_reward_idx is not None and plan_query is not None:
@@ -570,7 +572,7 @@ class Drive_OccWorld(BEVFormer):
             if sim_traj_rewards is not None:
                 all_rewards = all_rewards + self.sim_reward_weight * sim_traj_rewards.mean(dim=0).unsqueeze(0)
             max_reward_idx = all_rewards.argmax()
-            pose_pred = multi_pose_pred[max_reward_idx].unsqueeze(0)  # [bs, 1, 2]
+            pose_pred = multi_pose_pred[:, max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
             im_reward_loss = None
             sim_reward_loss = None
             im_reward_targets = None
@@ -1038,11 +1040,11 @@ class Drive_OccWorld(BEVFormer):
         if self.use_traj_reward_distillation:
             if pred_multi_traj_v1 is None or pred_multi_traj_v2 is None:
                 assert False, "pred_multi_traj_v1 or pred_multi_traj_v2 is None"
-            if isinstance(predefine_multi_traj_v1, list):
-                predefine_multi_traj_v1 = torch.cat(predefine_multi_traj_v1, dim=1)
-            if isinstance(pred_multi_traj_v1, list):
-                pred_multi_traj_v1 = torch.cat(pred_multi_traj_v1, dim=1)
-            if isinstance(im_reward_targets_v1, list):
+            if isinstance(predefine_multi_traj_v1, list):  # [1, 20, 1, 2/3]-->[1, times, 20, 1, 2/3]-->[1, times, 20, 2/3]
+                predefine_multi_traj_v1 = torch.stack(predefine_multi_traj_v1, dim=1).squeeze(3)
+            if isinstance(pred_multi_traj_v1, list):  # [1, 20, 1, 2/3]  -> [1, times, 20, 1, 2/3]  -> [1, times, 20, 2/3]
+                pred_multi_traj_v1 = torch.cat(pred_multi_traj_v1, dim=1).squeeze(3)
+            if isinstance(im_reward_targets_v1, list):  # [1,20]  -> [1, times, 20]
                 im_reward_targets_v1 = torch.cat(im_reward_targets_v1, dim=1)
             # 根据self.future_reward_model_frame_idx来选择pred_multi_traj_v2和fused_future_bev_feat
             pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]
@@ -1403,10 +1405,13 @@ class Drive_OccWorld(BEVFormer):
                 plan_query_list.insert(0, plan_query)
             
             if predefine_multi_traj is not None and self.use_traj_reward_distillation:
+                # predefine_multi_traj: [bs, traj_nums, planning_steps, 2]
                 predefine_multi_traj_list.insert(0, predefine_multi_traj)
             if pred_multi_traj is not None and self.use_traj_reward_distillation:
+                # pred_multi_traj: [bs, sample_traj_nums, planning_steps, 2]
                 pred_multi_traj_list.insert(0, pred_multi_traj)
             if im_reward_targets is not None and self.use_traj_reward_distillation:
+                # im_reward_targets: [bs, sample_traj_nums]
                 im_reward_targets_list.insert(0, im_reward_targets)
 
             return losses, pred_future_bev_feat_, img_feats_for_simple_plan, prev_bev_for_simple_plan, plan_query_list, \

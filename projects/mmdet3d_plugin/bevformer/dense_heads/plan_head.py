@@ -532,7 +532,7 @@ class PlanHead_v1(BaseModule):
 
             # 6. plan regression
             bs, _, _ = plan_query.shape
-            next_pose = self.reg_branch(plan_query).view((-1, self.planning_steps, 2))   # B*traj_nums,mode=1,2
+            next_pose = self.reg_branch(plan_query).view((bs, -1, self.planning_steps, 2))   # B,traj_nums,mode=1,2
 
             # 计算sim_rewards
             sim_rewards = None
@@ -542,11 +542,17 @@ class PlanHead_v1(BaseModule):
                     sim_rewards = self.cal_sim_reward(select_traj_, gt_trajs, None, instance_occupancy, drivable_area)
                 else:
                     # 使用预测的多模轨迹来计算sim_reward（加这个的原因是，尝试用预测的结果来计算sim_reward）
-                    sim_rewards = self.cal_sim_reward(next_pose.detach().clone().transpose(1, 0), gt_trajs, None, instance_occupancy, drivable_area)
+                    sim_rewards = self.cal_sim_reward(next_pose.detach().clone().view(bs, -1, 2).contiguous(), gt_trajs, None, instance_occupancy, drivable_area)
+            
+            # 对齐next_pose的shape
+            select_traj_ = select_traj_.reshape(bs, self.sample_traj_nums, self.planning_steps, -1).to(torch.float32)
             if return_plan_query:
-                return next_pose, loss, select_traj_.to(torch.float32), sim_rewards, plan_query, bev_feats
+                # next_pose: bs, traj_nums, planning_steps, 2
+                # select_traj_: bs, sample_traj_nums, planning_steps, 2
+                return next_pose, loss, select_traj_, sim_rewards, plan_query, bev_feats
             else:
-                return next_pose, loss, select_traj_.to(torch.float32), sim_rewards, None, bev_feats
+                # next_pose: bs, traj_nums, planning_steps, 2
+                return next_pose, loss, select_traj_, sim_rewards, None, bev_feats
         else:
             # select_traj
             select_traj = self.select(cur_trajs, costvolume, instance_occupancy, drivable_area)  # B,3
