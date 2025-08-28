@@ -92,6 +92,7 @@ use_simple_plan = True
 use_autoregressive_plan = True
 use_plan_query_distillation = True
 use_plan_feat_distillation = True
+use_traj_reward_distillation = True
 loss_bev=dict(type='MSELoss', loss_weight=1.0)
 
 find_unused_parameters=False  #  pts_bbox_head_v2.code_weights.requires_grad alwarys is False
@@ -142,6 +143,7 @@ model = dict(
     use_autoregressive_plan=use_autoregressive_plan,
     use_plan_query_distillation=use_plan_query_distillation,
     use_plan_feat_distillation=use_plan_feat_distillation,
+    use_traj_reward_distillation=use_traj_reward_distillation,
     loss_bev=loss_bev,
 
     # Predict frame num.
