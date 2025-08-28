@@ -986,7 +986,8 @@ class Drive_OccWorld(BEVFormer):
 
         if self.use_autoregressive_plan:
             losses_v1, fused_future_bev_feat, img_feats_for_simple_plan, prev_bev_for_simple_plan, \
-                plan_query_v1, predefine_multi_traj_v1, pred_multi_traj_v1, im_reward_targets_v1 = self.forward_train_v1(img_metas, 
+                plan_query_v1, predefine_multi_traj_v1, pred_multi_traj_v1, im_reward_targets_v1, \
+                     future_bev_feats = self.forward_train_v1(img_metas, 
                                            img, 
                                            segmentation, 
                                            instance, 
@@ -1002,7 +1003,8 @@ class Drive_OccWorld(BEVFormer):
             losses.update(losses_v1)
         else:
             losses_v1, fused_future_bev_feat, img_feats_for_simple_plan, prev_bev_for_simple_plan, \
-                plan_query_v1, predefine_multi_traj_v1, pred_multi_traj_v1, im_reward_targets_v1 = None, None, None, None, None, None, None, None
+                plan_query_v1, predefine_multi_traj_v1, pred_multi_traj_v1, im_reward_targets_v1, \
+                     future_bev_feats = None, None, None, None, None, None, None, None, None
 
         if self.use_simple_plan:
             losses_v2, ref_bev, plan_query_v2, pred_multi_traj_v2 =  self.forward_train_simple(img_metas, 
@@ -1043,9 +1045,9 @@ class Drive_OccWorld(BEVFormer):
             if isinstance(im_reward_targets_v1, list):
                 im_reward_targets_v1 = torch.cat(im_reward_targets_v1, dim=1)
             # 根据self.future_reward_model_frame_idx来选择pred_multi_traj_v2和fused_future_bev_feat
-            pred_multi_traj_v2_ = pred_multi_traj_v2[torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]
-            fused_future_bev_feat_ = fused_future_bev_feat[torch.tensor(self.future_reward_model_frame_idx).to(fused_future_bev_feat.device)]
-            losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(pred_multi_traj_v1, pred_multi_traj_v2_, fused_future_bev_feat_)
+            pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]
+            future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]
+            losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_)
             losses.update(losses_distill_traj_reward=losses_distill_traj_reward)
 
 
@@ -1408,7 +1410,7 @@ class Drive_OccWorld(BEVFormer):
                 im_reward_targets_list.insert(0, im_reward_targets)
 
             return losses, pred_future_bev_feat_, img_feats_for_simple_plan, prev_bev_for_simple_plan, plan_query_list, \
-                predefine_multi_traj_list, pred_multi_traj_list, im_reward_targets_list
+                predefine_multi_traj_list, pred_multi_traj_list, im_reward_targets_list, pred_future_bev_feat_
         else:
             return losses, None, None, None, None
 
