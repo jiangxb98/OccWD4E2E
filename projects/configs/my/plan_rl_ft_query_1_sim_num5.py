@@ -341,6 +341,7 @@ model = dict(
         random_select=random_select,
         use_sim_reward=use_sim_reward,
         use_im_reward=use_im_reward,
+        sim_reward_nums=sim_reward_nums,
         use_gt_occ_for_sim_reward=use_gt_occ_for_sim_reward,
         plan_query_nums=plan_query_nums,
         plan_traj_for_sim_reward_epoch=plan_traj_for_sim_reward_epoch,

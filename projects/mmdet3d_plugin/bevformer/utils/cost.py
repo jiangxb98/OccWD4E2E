@@ -81,21 +81,24 @@ class Cost_Function(nn.Module):
         '''
         # 是否发生碰撞
         safetycost = torch.clamp(self.safetycost(trajs, instance_occupancy), 0, 100)                 # penalize overlap with instance_occupancy
-        # 前方是否有车
-        headwaycost = torch.clamp(self.headwaycost(trajs, instance_occupancy, drivable_area), 0, 100)# penalize overlap with front instance (10m)
-        # lrdividercost = torch.clamp(self.lrdividercost(trajs, lane_divider), 0, 100)               # penalize distance with lane
-        # 是否舒适
-        comfortcost = torch.clamp(self.comfortcost(trajs), 0, 100)                                   # penalize high accelerations (lateral, longitudinal, jerk)
-        # 是否前进
-        progresscost = self.progresscost(trajs)                         # L2 loss
+
         # 是否违规
         rulecost = torch.clamp(self.rulecost(trajs, drivable_area), 0, 100)                          # penalize overlap with out of drivable_area
 
+        # 是否前进
+        progresscost = self.progresscost(trajs)                         # L2 loss
+
+        # 前方是否有车
+        headwaycost = torch.clamp(self.headwaycost(trajs, instance_occupancy, drivable_area), 0, 100)# penalize overlap with front instance (10m)
+        
+        # 是否舒适
+        comfortcost = torch.clamp(self.comfortcost(trajs), 0, 100)                                   # penalize high accelerations (lateral, longitudinal, jerk)
+
 
         if sim_reward_nums == 1:
-            cost_fo = safetycost + headwaycost + rulecost
-        elif sim_reward_nums == 3:
-            cost_fo = [safetycost, headwaycost, rulecost]
+            cost_fo = safetycost + rulecost
+        elif sim_reward_nums == 5:
+            cost_fo = [safetycost, rulecost, progresscost, headwaycost, comfortcost]
         else:
             raise ValueError(f'sim_reward_nums must be 1 or 3, but got {sim_reward_nums}')
         
