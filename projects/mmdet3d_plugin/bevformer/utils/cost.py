@@ -50,6 +50,7 @@ class Cost_Function(nn.Module):
         self.progresscost = Progress(cfg)
         self.rulecost = Rule(cfg)
         self.costvolume = Cost_Volume(cfg)
+        self.comfortcost_navsim = Comfort_Navsim(cfg)
 
     def forward(self, cost_volume, trajs, instance_occupancy, drivable_area):
         '''
@@ -72,12 +73,14 @@ class Cost_Function(nn.Module):
         return cost_fo
     
 
-    def forward_sim(self, trajs, instance_occupancy, drivable_area, sim_reward_nums=1):
+    def forward_sim(self, trajs, instance_occupancy, drivable_area, sim_reward_nums=1, vel_steering=None):
+
         '''
         trajs: torch.Tensor (B, N, 2)
         instance_occupancy: torch.Tensor(B, 200, 200)   instance_occupied=1
         drivable_area: torch.Tensor(B, 200, 200)        driveable_surface=1
         sim_reward_nums: int
+        vel_steering: B,4 (vx, vy, v_yaw, steering)
         '''
         # 是否发生碰撞
         safetycost = torch.clamp(self.safetycost(trajs, instance_occupancy), 0, 100)                 # penalize overlap with instance_occupancy
@@ -92,7 +95,7 @@ class Cost_Function(nn.Module):
         headwaycost = torch.clamp(self.headwaycost(trajs, instance_occupancy, drivable_area), 0, 100)# penalize overlap with front instance (10m)
         
         # 是否舒适
-        comfortcost = torch.clamp(self.comfortcost(trajs), 0, 100)                                   # penalize high accelerations (lateral, longitudinal, jerk)
+        comfortcost = self.comfortcost_navsim(trajs, vel_steering[:,:2], vel_steering[:,2], vel_steering[:,3])                                   # penalize high accelerations (lateral, longitudinal, jerk)
 
 
         if sim_reward_nums == 1:
@@ -420,6 +423,113 @@ class Comfort(BaseCost):
         subcost += ego_jerk ** 2
 
         return subcost * self.factor
+
+
+class Comfort_Navsim(BaseCost):
+    """舒适性代价函数 - 基于两点状态评估舒适度"""
+    def __init__(self, cfg):
+        super(Comfort_Navsim, self).__init__(cfg)
+
+        # 参考navsim的舒适性阈值
+        self.max_lat_acc = 4.89      # [m/s²] 横向加速度阈值
+        self.max_lon_acc = 2.40      # [m/s²] 纵向加速度上限
+        self.min_lon_acc = -4.05     # [m/s²] 纵向加速度下限
+        self.max_jerk = 8.37         # [m/s³] 总加加速度阈值
+        self.max_lon_jerk = 4.13     # [m/s³] 纵向加加速度阈值
+        self.max_yaw_accel = 1.93    # [rad/s²] 偏航角加速度阈值
+        self.max_yaw_rate = 0.95     # [rad/s] 偏航角速度阈值
+
+        self.dt = 0.5  # 时间间隔为0.5s
+
+    def forward(self, trajs, initial_velocities, initial_yaw_rate, initial_steering_angle):
+        '''
+        trajs: torch.Tensor<float> (B, 1, 2) - 第0.5s时刻的[x, y]坐标
+        initial_velocities: torch.Tensor<float> (B, 2) - 当前帧的[x方向速度, y方向速度]
+        initial_yaw_rate: torch.Tensor<float> (B,) - 当前帧的角速度
+        initial_steering_angle: torch.Tensor<float> (B,) - 当前帧的转向角
+        返回: torch.Tensor<float> (B,) - 每个轨迹的舒适性得分 {0, 1}
+        '''
+        B, _, _ = trajs.shape
+
+        
+        # 计算终点状态
+        final_positions = trajs.squeeze(1)  # (B, 2) - [x横向, y纵向]
+        final_heading = torch.atan2(final_positions[:, 0], final_positions[:, 1])  # 修正：使用x/y计算航向角
+        
+        # 计算平均速度和加速度
+        avg_velocities = final_positions / self.dt  # 平均速度 [x横向, y纵向]
+        accelerations = (avg_velocities - initial_velocities) / self.dt  # 加速度
+        
+        # 计算角速度和角加速度
+        heading_change = final_heading - initial_steering_angle
+        avg_yaw_rate = heading_change / self.dt  # 平均角速度
+        yaw_acceleration = (avg_yaw_rate - initial_yaw_rate) / self.dt  # 角加速度
+        
+        # 计算加加速度（假设线性变化）
+        initial_accelerations = torch.zeros_like(accelerations)  # 假设初始加速度为0
+        jerks = (accelerations - initial_accelerations) / self.dt  # 加加速度
+        
+        # 舒适性检查
+        comfort_scores = torch.ones(B, device=trajs.device)
+        
+        # 1. 纵向加速度检查（y方向，车辆前进方向）
+        lon_acc_ok = (accelerations[:, 1] >= self.min_lon_acc) & \
+                     (accelerations[:, 1] <= self.max_lon_acc)
+        comfort_scores *= lon_acc_ok.float()
+        
+        # 2. 横向加速度检查（x方向，车辆左右方向）
+        lat_acc_ok = torch.abs(accelerations[:, 0]) <= self.max_lat_acc
+        comfort_scores *= lat_acc_ok.float()
+        
+        # 3. 总加加速度检查
+        total_jerk = torch.sqrt((jerks ** 2).sum(dim=-1))
+        total_jerk_ok = total_jerk <= self.max_jerk
+        comfort_scores *= total_jerk_ok.float()
+        
+        # 4. 纵向加加速度检查（y方向）
+        lon_jerk_ok = torch.abs(jerks[:, 1]) <= self.max_lon_jerk
+        comfort_scores *= lon_jerk_ok.float()
+        
+        # 5. 角加速度检查
+        yaw_accel_ok = torch.abs(yaw_acceleration) <= self.max_yaw_accel
+        comfort_scores *= yaw_accel_ok.float()
+        
+        # 6. 角速度检查（使用平均角速度）
+        yaw_rate_ok = torch.abs(avg_yaw_rate) <= self.max_yaw_rate
+        comfort_scores *= yaw_rate_ok.float()
+        
+        return comfort_scores
+
+    def get_detailed_metrics(self, trajs, initial_velocities, initial_yaw_rate, initial_steering_angle):
+        """返回详细的舒适性指标，用于调试"""
+        B, _, _ = trajs.shape
+        
+        final_positions = trajs.squeeze(1)  # [x横向, y纵向]
+        final_heading = torch.atan2(final_positions[:, 0], final_positions[:, 1])  # 修正航向角计算
+        
+        avg_velocities = final_positions / self.dt
+        accelerations = (avg_velocities - initial_velocities) / self.dt
+        
+        heading_change = final_heading - initial_steering_angle
+        avg_yaw_rate = heading_change / self.dt
+        yaw_acceleration = (avg_yaw_rate - initial_yaw_rate) / self.dt
+        
+        initial_accelerations = torch.zeros_like(accelerations)
+        jerks = (accelerations - initial_accelerations) / self.dt
+        total_jerk = torch.sqrt((jerks ** 2).sum(dim=-1))
+        
+        return {
+            'lon_acc': accelerations[:, 1],      # y方向，纵向加速度
+            'lat_acc': accelerations[:, 0],      # x方向，横向加速度
+            'total_jerk': total_jerk,
+            'lon_jerk': jerks[:, 1],             # y方向，纵向加加速度
+            'lat_jerk': jerks[:, 0],             # x方向，横向加加速度
+            'yaw_accel': yaw_acceleration,
+            'avg_yaw_rate': avg_yaw_rate,
+            'final_positions': final_positions,  # [x横向, y纵向]
+            'avg_velocities': avg_velocities,    # [x横向, y纵向]
+            'final_heading': final_heading
+        }
 
 class Progress(BaseCost):
     """进度代价函数 - 评估轨迹的前进进度，鼓励车辆向前行驶，同时考虑与目标点的距离。"""

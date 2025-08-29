@@ -330,7 +330,7 @@ class PlanHead_v1(BaseModule):
 
         return torch.mean(L)
 
-    def cal_sim_reward(self, trajs, gt_trajs, cost_volume, instance_occupancy, drivable_area):
+    def cal_sim_reward(self, trajs, gt_trajs, cost_volume, instance_occupancy, drivable_area, vel_steering):
         '''
         这个是为了计算sim reward的
         trajs: torch.Tensor (B, N, 3)
@@ -342,7 +342,7 @@ class PlanHead_v1(BaseModule):
         if gt_trajs.ndim == 2:
             gt_trajs = gt_trajs[:, None]
 
-        cost = self.cost_function.forward_sim(trajs[:,:,:2], instance_occupancy, drivable_area, self.sim_reward_nums)
+        cost = self.cost_function.forward_sim(trajs[:,:,:2], instance_occupancy, drivable_area, self.sim_reward_nums, vel_steering)
 
         if self.sim_reward_nums == 1:
             # cost = cost
@@ -371,6 +371,11 @@ class PlanHead_v1(BaseModule):
                         neg_mask = cost[i] < 0
                         cost[i] = torch.ones_like(cost[i])
                         cost[i][neg_mask] = 0
+                elif i == 4:
+                    # for comfort
+                    # 0 is not comfort, 1 is comfort
+                    # cost[i] = cost[i]
+                    continue
                 else:
                     pos_mask = cost[i] <= 0
                     neg_mask = cost[i] > 0
@@ -426,7 +431,7 @@ class PlanHead_v1(BaseModule):
         return select_traj
 
     @auto_fp16(apply_to=('bev_feats'))
-    def forward(self, bev_feats, trajs, sem_occupancy, command, gt_trajs=None, multi_traj=False, training_epoch=0, return_plan_query=False):
+    def forward(self, bev_feats, trajs, sem_occupancy, command, gt_trajs=None, multi_traj=False, training_epoch=0, return_plan_query=False, vel_steering=None):
         """ Forward function for each frame.
 
         Args:
@@ -559,10 +564,10 @@ class PlanHead_v1(BaseModule):
                 if training_epoch < self.plan_traj_for_sim_reward_epoch:
                     # 使用初始化的多模轨迹来计算sim_reward
                     # select_traj_: bs, sample_traj_nums, 2
-                    sim_rewards = self.cal_sim_reward(select_traj_, gt_trajs, None, instance_occupancy, drivable_area)
+                    sim_rewards = self.cal_sim_reward(select_traj_, gt_trajs, None, instance_occupancy, drivable_area, vel_steering)
                 else:
                     # 使用预测的多模轨迹来计算sim_reward（加这个的原因是，尝试用预测的结果来计算sim_reward）
-                    sim_rewards = self.cal_sim_reward(next_pose.detach().clone().view(bs, -1, 2).contiguous(), gt_trajs, None, instance_occupancy, drivable_area)
+                    sim_rewards = self.cal_sim_reward(next_pose.detach().clone().view(bs, -1, 2).contiguous(), gt_trajs, None, instance_occupancy, drivable_area, vel_steering)
             
             # 对齐next_pose的shape
             select_traj_ = select_traj_.reshape(bs, self.sample_traj_nums, self.planning_steps, -1).to(torch.float32)
