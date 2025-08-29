@@ -350,14 +350,33 @@ class PlanHead_v1(BaseModule):
             neg_mask = cost > 0
             cost[pos_mask] = 1
             cost[neg_mask] = 0
-        elif self.sim_reward_nums == 3:
+        
+        elif self.sim_reward_nums == 5:
+            # 'no_at_fault_collisions', 'drivable_area_compliance', 'ego_progress', 'time_to_collision_within_bound', 'comfort'
+            # weights: [0.1, 0.5, 0.5, 1.0, 1.0]
+            # S_NC, S_DAC, S_EP, S_TTC, S_COMFORT
+            # 5xEP, 5xTTC, 2xCOMFORT
             for i in range(self.sim_reward_nums):
                 # cost=0表示没有碰撞
-                pos_mask = cost[i] <= 0
-                neg_mask = cost[i] > 0
-                
-                cost[i][pos_mask] = 1
-                cost[i][neg_mask] = 0
+                if i == 2:
+                    # 约束在安全范围内
+                    cost[i] = cost[i] * cost[0] * cost[1]
+                    max_progress = cost[i].max()
+                    if max_progress > 5.0:
+                        cost[i] = cost[i] / max_progress
+                        neg_mask = cost[i] < 0
+                        cost[i][neg_mask] = 0
+                    else:
+                        # 负数距离的话，就设置为0，其他小于5m的都是为1的
+                        neg_mask = cost[i] < 0
+                        cost[i] = torch.ones_like(cost[i])
+                        cost[i][neg_mask] = 0
+                else:
+                    pos_mask = cost[i] <= 0
+                    neg_mask = cost[i] > 0
+                    
+                    cost[i][pos_mask] = 1
+                    cost[i][neg_mask] = 0
 
             cost = torch.cat(cost, dim=0)  # shape: B*self.sim_reward_nums, sample_traj_nums  eg. (3, 20)
         else:

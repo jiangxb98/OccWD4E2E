@@ -81,7 +81,7 @@ class RewardConvNet(nn.Module):
                  fut_traj_num: int = 3,
                  bev_h: int = 200,
                  bev_w: int = 200,
-                 sim_reward_nums: int = 0,
+                 sim_reward_nums: int = 5,
                  use_sim_reward: bool = False,
                  use_im_reward: bool = False,
                  extra_bev_adapter: bool = False,
@@ -269,7 +269,6 @@ class RewardConvNet(nn.Module):
 
         # 建议这里额外加一个transformer,对fut_bev_feature进行处理，和traj_feats进行交互
 
-
         reward_feats = self.conv_reward_net(fut_bev_feature)  # [bs, 256, 1, 1]
         traj_feats = self.trajectory_single_encoder(traj_feats)  # [bs*num_traj, 256]
         # wote 额外加了个transformer
@@ -346,7 +345,7 @@ class RewardConvNet(nn.Module):
         # 选择最大的reward轨迹的索引
         best_traj_idx = torch.argmax(im_traj_scores_a, dim=2)  # [bs, times]
         best_traj_a = model_a_trajectories[:, torch.arange(times), best_traj_idx.squeeze(0)]  # [bs, times, 2]
-        
+
         if return_distance_loss:
             # 计算模型B轨迹与最佳轨迹A的距离
             distance_loss = torch.norm(model_b_trajectory - best_traj_a, dim=1).mean()

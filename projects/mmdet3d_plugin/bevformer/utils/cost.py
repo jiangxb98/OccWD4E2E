@@ -47,7 +47,7 @@ class Cost_Function(nn.Module):
         self.headwaycost = HeadwayCost(cfg)
         # self.lrdividercost = LR_divider(cfg)
         self.comfortcost = Comfort(cfg)
-        # self.progresscost = Progress(cfg)
+        self.progresscost = Progress(cfg)
         self.rulecost = Rule(cfg)
         self.costvolume = Cost_Volume(cfg)
 
@@ -79,11 +79,16 @@ class Cost_Function(nn.Module):
         drivable_area: torch.Tensor(B, 200, 200)        driveable_surface=1
         sim_reward_nums: int
         '''
+        # 是否发生碰撞
         safetycost = torch.clamp(self.safetycost(trajs, instance_occupancy), 0, 100)                 # penalize overlap with instance_occupancy
+        # 前方是否有车
         headwaycost = torch.clamp(self.headwaycost(trajs, instance_occupancy, drivable_area), 0, 100)# penalize overlap with front instance (10m)
         # lrdividercost = torch.clamp(self.lrdividercost(trajs, lane_divider), 0, 100)               # penalize distance with lane
-        # comfortcost = torch.clamp(self.comfortcost(trajs), 0, 100)                                   # penalize high accelerations (lateral, longitudinal, jerk)
-        # progresscost = torch.clamp(self.progresscost(trajs), -100, 100)                              # L2 loss
+        # 是否舒适
+        comfortcost = torch.clamp(self.comfortcost(trajs), 0, 100)                                   # penalize high accelerations (lateral, longitudinal, jerk)
+        # 是否前进
+        progresscost = self.progresscost(trajs)                         # L2 loss
+        # 是否违规
         rulecost = torch.clamp(self.rulecost(trajs, drivable_area), 0, 100)                          # penalize overlap with out of drivable_area
 
 
@@ -420,21 +425,37 @@ class Progress(BaseCost):
         super(Progress, self).__init__(cfg)
         self.factor = 0.5
 
+    # def forward(self, trajs):
+    #     '''
+    #     trajs: torch.Tensor<float> (B, N, 2)
+    #     target_points: torch.Tensor<float> (B, 2)
+    #     '''
+    #     # 目标点设为原点（可根据需要修改）
+    #     target_points = torch.zeros_like(trajs[:, 0, :])    # B,2
+    #     B, N,  _ = trajs.shape
+    #     # 子代价1：纵向位移（前进为正） -subcost1就是惩罚倒车
+    #     subcost1 = trajs[:,:,1]
+    #     # 子代价2：与目标点的距离（如果有目标点）
+    #     if target_points.sum() < 0.5:
+    #         subcost2 = 0
+    #     else:
+    #         target_points = target_points.unsqueeze(1)
+    #         subcost2 = ((trajs - target_points) ** 2).sum(dim=-1)  #
+    #     # 最终代价：距离代价 - 前进奖励
+    #     return (subcost2 - subcost1) * self.factor
+
     def forward(self, trajs):
         '''
         trajs: torch.Tensor<float> (B, N, 2)
         target_points: torch.Tensor<float> (B, 2)
         '''
-        # 目标点设为原点（可根据需要修改）
-        target_points = torch.zeros_like(trajs[:, 0, :])    # B,2
         B, N,  _ = trajs.shape
-        # 子代价1：纵向位移（前进为正） -subcost1就是惩罚倒车
-        subcost1 = trajs[:,:,1]
-        # 子代价2：与目标点的距离（如果有目标点）
-        if target_points.sum() < 0.5:
-            subcost2 = 0
-        else:
-            target_points = target_points.unsqueeze(1)
-            subcost2 = ((trajs - target_points) ** 2).sum(dim=-1)  #
-        # 最终代价：距离代价 - 前进奖励
-        return (subcost2 - subcost1) * self.factor
+        # 距离代价
+        # 如果都小于5m就是1，如果是大于5m，那就是按照比例来算
+        # 如果最大前进距离 > 5.0米，按相对比例归一化
+        # max_progress = trajs[:,:,1].max()
+        # if max_progress > 5.0:
+        #     return trajs[:,:,1] / max_progress
+        # else:
+        #     return torch.ones_like(trajs[:,:,1])
+        return trajs[:,:,1]

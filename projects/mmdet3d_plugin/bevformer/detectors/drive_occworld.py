@@ -536,6 +536,8 @@ class Drive_OccWorld(BEVFormer):
                 im_reward_loss, im_reward_targets = compute_im_reward_loss(real_traj, im_traj_rewards, multi_traj)
             else:
                 im_reward_loss = None
+                im_reward_targets = compute_im_reward_loss(real_traj, im_traj_rewards, multi_traj, only_return_im_reward_targets=True)
+                
             # 2. sim_loss, 根据世界模型的输出，计算sim_loss
             # 注意这里存在问题，sim_rewards可能都是1，那么选最大的就是默认第一个了
             if sim_rewards is not None and sim_traj_rewards is not None and self.use_sim_reward:
@@ -552,30 +554,51 @@ class Drive_OccWorld(BEVFormer):
                 max_reward_idx = all_rewards.argmax()
                 pose_pred = multi_pose_pred[:, max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
             elif self.use_sim_reward and not self.use_im_reward and sim_rewards is not None:
-                all_rewards = sim_rewards.mean(dim=0).unsqueeze(0)
+                all_rewards = im_reward_targets
                 max_reward_idx = all_rewards.argmax()
-                pose_pred = multi_pose_pred[:,max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
+                pose_pred = multi_pose_pred[:, max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
             elif self.use_im_reward and self.use_sim_reward and im_traj_rewards is not None and sim_rewards is not None:
-                # 加权reward
-                all_rewards = self.im_reward_weight * im_reward_targets + self.sim_reward_weight * sim_rewards.mean(dim=0).unsqueeze(0)
+                all_rewards = im_reward_targets
                 max_reward_idx = all_rewards.argmax()
-                pose_pred = multi_pose_pred[:,max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
+                pose_pred = multi_pose_pred[:, max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
             else:
                 pass
             if max_reward_idx is not None and plan_query is not None:
                 plan_query = plan_query[:, max_reward_idx].unsqueeze(1)
         else:
-            # max the im_traj_rewards + sim_traj_rewards
+            # old version
+            # all_rewards = 0
+            # if im_traj_rewards is not None:
+            #     all_rewards = all_rewards + self.im_reward_weight * im_traj_rewards
+            # if sim_traj_rewards is not None:
+            #     all_rewards = all_rewards + self.sim_reward_weight * sim_traj_rewards.mean(dim=0).unsqueeze(0)
+            # max_reward_idx = all_rewards.argmax()
+            # pose_pred = multi_pose_pred[:, max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
+            # im_reward_loss = None
+            # sim_reward_loss = None
+            # im_reward_targets = None
+
             all_rewards = 0
-            if im_traj_rewards is not None:
-                all_rewards = all_rewards + self.im_reward_weight * im_traj_rewards
-            if sim_traj_rewards is not None:
-                all_rewards = all_rewards + self.sim_reward_weight * sim_traj_rewards.mean(dim=0).unsqueeze(0)
+            w = [0.1, 0.5, 0.5, 1.0, 1.0]
+            if self.use_sim_reward:
+                S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = sim_traj_rewards
+                S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1), S_COMFORT.squeeze(-1)
+                all_rewards = all_rewards + (
+                    w[1] * torch.log(S_NC) +
+                    w[2] * torch.log(S_DAC) +
+                    w[3] * torch.log(5 * S_TTC + 2 * S_COMFORT + 5 * S_EP)
+                )
+            if self.use_im_reward:
+                all_rewards = all_rewards * w[0] + im_traj_rewards
+
             max_reward_idx = all_rewards.argmax()
-            pose_pred = multi_pose_pred[:, max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
+            pose_pred = multi_pose_pred[:, max_reward_idx]
+
             im_reward_loss = None
             sim_reward_loss = None
             im_reward_targets = None
+
+
 
         return pose_pred, pose_loss, im_reward_loss, sim_reward_loss, plan_query, multi_traj, multi_pose_pred, im_reward_targets
 
@@ -1417,7 +1440,7 @@ class Drive_OccWorld(BEVFormer):
             return losses, pred_future_bev_feat_, img_feats_for_simple_plan, prev_bev_for_simple_plan, plan_query_list, \
                 predefine_multi_traj_list, pred_multi_traj_list, im_reward_targets_list, pred_future_bev_feat_last
         else:
-            return losses, None, None, None, None
+            return losses, None, None, None, None, None, None, None, None
 
     def forward_test(self, 
                      img_metas, 

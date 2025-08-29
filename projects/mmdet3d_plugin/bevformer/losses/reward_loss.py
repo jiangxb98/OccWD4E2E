@@ -6,6 +6,7 @@ def compute_im_reward_loss(
     gt_trajectory: torch.Tensor,  # bs, num_traj, 2/3
     prediction_rewards,  # bs, num_traj, 1
     trajectory_samples,  # bs, sample_traj_nums, planning_steps, 2/3
+    only_return_im_reward_targets=False,
 ) -> torch.Tensor:
     """
     Compute the reward loss for the reward model.
@@ -34,6 +35,9 @@ def compute_im_reward_loss(
 
     # Apply softmax to L2 distances to get reward targets
     reward_targets = torch.softmax(-l2_distances, dim=-1)  # Shape: [batch_size, 256]
+
+    if only_return_im_reward_targets:
+        return reward_targets
 
     # Compute loss using cross-entropy
     prediction_rewards = prediction_rewards.squeeze(-1).clamp(1e-6, 1 - 1e-6)
