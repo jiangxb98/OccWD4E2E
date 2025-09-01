@@ -185,6 +185,8 @@ class PlanHead_v1(BaseModule):
                  sim_reward_nums=1,
                  convert_bs_mode=True, # 在计算多模轨迹时，是否需要转换为bs模式，经过测试，True时，计算结果会更好
                  return_adapter_bev_feats=False,  # 是否返回调整后的bev feat作为reward model的输入，这个要为False
+                 sample_best_k = 5,
+                 sample_num = 1800,
                  *args,
                  **kwargs):
 
@@ -203,13 +205,13 @@ class PlanHead_v1(BaseModule):
         self.sim_reward_nums = sim_reward_nums
         self.convert_bs_mode = convert_bs_mode
         self.return_adapter_bev_feats = return_adapter_bev_feats
-
+        self.sample_best_k = sample_best_k
         # cls
         self.instance_cls = torch.tensor(instance_cls, requires_grad=False)  # 'bicycle', 'bus', 'car', 'construction', 'motorcycle', 'pedestrian', 'trailer', 'truck'
         self.drivable_area_cls = torch.tensor(drivable_area_cls, requires_grad=False)  # 'drivable_area'
 
         # sample trajs
-        self.sample_num = 1800
+        self.sample_num = sample_num
         assert self.sample_num % 3 == 0
         self.num = int(self.sample_num / 3)
 
@@ -416,7 +418,7 @@ class PlanHead_v1(BaseModule):
         CS = sm_cost_fo
 
         if random_select:
-            sample_best_k = 5
+            sample_best_k = self.sample_best_k
             _, KK = torch.topk(CS, sample_best_k, dim=-1, largest=False)   # B,N_sample
             ii = torch.arange(len(trajs))
             select_traj = trajs[ii[:,None], KK].squeeze(1) # (B, N_sample, 3)

@@ -86,7 +86,7 @@ bev_w_ = 200
 pred_height = 16
 
 # for reward model
-sample_num = 1800
+sample_num = 60
 use_reward_model = True   # 使用奖励模型
 output_multi_traj = True  # 输出多条轨迹
 sample_traj_nums = 20     # 采样轨迹数

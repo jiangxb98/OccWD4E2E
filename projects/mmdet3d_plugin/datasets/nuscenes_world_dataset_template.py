@@ -27,6 +27,7 @@ class NuScenesWorldDatasetTemplate(CustomNuScenesDataset):
                  use_fine_occ,
                  turn_on_flow,
                  future_length,
+                 sample_num=1800,
                  ego_mask=None,
                  load_frame_interval=None,
                  rand_frame_interval=(1,),
@@ -50,6 +51,7 @@ class NuScenesWorldDatasetTemplate(CustomNuScenesDataset):
         self.use_separate_classes = use_separate_classes
         self.use_fine_occ = use_fine_occ
         self.turn_on_flow = turn_on_flow
+        self.sample_num = sample_num
         # load origin nusc dataset for instance annotation
         self.nusc = NuScenes(version='v1.0-trainval', dataroot=self.data_root, verbose=False)
         self.nusc_can = NuScenesCanBus(dataroot=self.data_root)
@@ -273,9 +275,9 @@ class NuScenesWorldDatasetTemplate(CustomNuScenesDataset):
         t_end = future_length * SAMPLE_INTERVAL  # second
         t_interval = SAMPLE_INTERVAL / 10
         tt = np.arange(t_start, t_end + t_interval, t_interval)
-        sampled_trajectories_fine = trajectory_sampler.sample(v0, Kappa, T0, N0, tt, 1800)  # [720, 360, 720] Left,Straight,Right
-        sampled_trajectories = sampled_trajectories_fine[:, ::10]   # sample_num, start+future, 3
-        sampled_trajectories = sampled_trajectories[:, 1:] - sampled_trajectories[:, :-1]  # sample_num, future, 3
+        sampled_trajectories_fine = trajectory_sampler.sample(v0, Kappa, T0, N0, tt, self.sample_num)  # [720, 360, 720] Left,Straight,Right
+        sampled_trajectories = sampled_trajectories_fine[:, ::10]   # sample_num, start+future, 3  (1800,61,3)->(1800,7,3)
+        sampled_trajectories = sampled_trajectories[:, 1:] - sampled_trajectories[:, :-1]  # sample_num, future, 3  (1800,7,3)->(1800,6,3)
         return sampled_trajectories
 
     def get_data_info(self, index):

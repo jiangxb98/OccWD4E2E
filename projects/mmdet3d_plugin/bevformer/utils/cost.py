@@ -440,6 +440,7 @@ class Comfort_Navsim(BaseCost):
         self.max_yaw_rate = 0.95     # [rad/s] 偏航角速度阈值
 
         self.dt = 0.5  # 时间间隔为0.5s
+        self.dt_half = 0.25  # 时间间隔为0.25s
 
     def forward(self, trajs, initial_velocities, initial_yaw_rate, initial_steering_angle):
         '''
@@ -449,12 +450,14 @@ class Comfort_Navsim(BaseCost):
         initial_steering_angle: torch.Tensor<float> (B,) - 当前帧的转向角
         返回: torch.Tensor<float> (B,) - 每个轨迹的舒适性得分 {0, 1}
         '''
-        B, _, _ = trajs.shape
-
+        B, N, _ = trajs.shape
+        initial_velocities = initial_velocities.repeat(1, N, 1)
+        initial_yaw_rate = initial_yaw_rate.repeat(1, N, 1).squeeze(-1)
+        initial_steering_angle = initial_steering_angle.repeat(1, N, 1).squeeze(-1)
         
         # 计算终点状态
-        final_positions = trajs.squeeze(1)  # (B, 2) - [x横向, y纵向]
-        final_heading = torch.atan2(final_positions[:, 0], final_positions[:, 1])  # 修正：使用x/y计算航向角
+        final_positions = trajs  # (B, N, 2) - [x横向, y纵向]
+        final_heading = torch.atan2(final_positions[:, :, 1], final_positions[:, :, 0])  # 修正：使用x/y计算航向角  (B, N)
         
         # 计算平均速度和加速度
         avg_velocities = final_positions / self.dt  # 平均速度 [x横向, y纵向]
@@ -470,15 +473,15 @@ class Comfort_Navsim(BaseCost):
         jerks = (accelerations - initial_accelerations) / self.dt  # 加加速度
         
         # 舒适性检查
-        comfort_scores = torch.ones(B, device=trajs.device)
+        comfort_scores = torch.ones((B, N), device=trajs.device)
         
         # 1. 纵向加速度检查（y方向，车辆前进方向）
-        lon_acc_ok = (accelerations[:, 1] >= self.min_lon_acc) & \
-                     (accelerations[:, 1] <= self.max_lon_acc)
+        lon_acc_ok = (accelerations[:, :, 1] >= self.min_lon_acc) & \
+                     (accelerations[:, :, 1] <= self.max_lon_acc)
         comfort_scores *= lon_acc_ok.float()
         
         # 2. 横向加速度检查（x方向，车辆左右方向）
-        lat_acc_ok = torch.abs(accelerations[:, 0]) <= self.max_lat_acc
+        lat_acc_ok = torch.abs(accelerations[:, :, 0]) <= self.max_lat_acc
         comfort_scores *= lat_acc_ok.float()
         
         # 3. 总加加速度检查
@@ -487,18 +490,19 @@ class Comfort_Navsim(BaseCost):
         comfort_scores *= total_jerk_ok.float()
         
         # 4. 纵向加加速度检查（y方向）
-        lon_jerk_ok = torch.abs(jerks[:, 1]) <= self.max_lon_jerk
+        lon_jerk_ok = torch.abs(jerks[:, :, 1]) <= self.max_lon_jerk
         comfort_scores *= lon_jerk_ok.float()
         
-        # 5. 角加速度检查
-        yaw_accel_ok = torch.abs(yaw_acceleration) <= self.max_yaw_accel
-        comfort_scores *= yaw_accel_ok.float()
+        # # 5. 角加速度检查
+        # yaw_accel_ok = torch.abs(yaw_acceleration) <= self.max_yaw_accel
+        # comfort_scores *= yaw_accel_ok.float()
         
-        # 6. 角速度检查（使用平均角速度）
-        yaw_rate_ok = torch.abs(avg_yaw_rate) <= self.max_yaw_rate
-        comfort_scores *= yaw_rate_ok.float()
+        # # 6. 角速度检查（使用平均角速度）
+        # yaw_rate_ok = torch.abs(avg_yaw_rate) <= self.max_yaw_rate
+        # comfort_scores *= yaw_rate_ok.float()
         
         return comfort_scores
+
 
     def get_detailed_metrics(self, trajs, initial_velocities, initial_yaw_rate, initial_steering_angle):
         """返回详细的舒适性指标，用于调试"""

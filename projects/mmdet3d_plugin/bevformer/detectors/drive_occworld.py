@@ -100,7 +100,7 @@ class Drive_OccWorld(BEVFormer):
 
                  use_traj_reward_distillation=False,  # simple_plan predict traj reward
                  
-                 use_traj_anchor=False, # 是否使用候选轨迹用于计算reward
+                 use_traj_anchor=False, # 是否使用候选轨迹用于计算reward，不使用候选轨迹，经过试验发现，效果很差
                  
                  *args,
                  **kwargs,):
@@ -525,13 +525,17 @@ class Drive_OccWorld(BEVFormer):
                                                                        self.training_epoch, self.use_plan_query_distillation, vel_steering)
         # 这个地方需要更改，这里计算rewards的时候，是用pose_pred还是multi_traj呢？
         # 仔细看了下wote，是使用的multi_traj来计算的，在推理的时候是用的pose_pred(wote中是init_trajectory_anchor + trajectory_offset)
+        # 经过实验，发现使用
         if self.plan_head.return_adapter_bev_feats:
             input_bev = adapter_bev_feats
         else:
             input_bev = bev
 
-        if self.use_traj_anchor:
-            input_traj = multi_traj
+        if self.training:
+            if self.use_traj_anchor:
+                input_traj = multi_traj[:, :, :, :2]
+            else:
+                input_traj = multi_pose_pred
         else:
             input_traj = multi_pose_pred
         
@@ -1081,19 +1085,28 @@ class Drive_OccWorld(BEVFormer):
             losses.update(losses_distill_plan_query=losses_distill_plan_query)
 
         if self.use_traj_reward_distillation:
-            if pred_multi_traj_v1 is None or pred_multi_traj_v2 is None:
-                assert False, "pred_multi_traj_v1 or pred_multi_traj_v2 is None"
-            if isinstance(predefine_multi_traj_v1, list):  # [1, 20, 1, 2/3]-->[1, times, 20, 1, 2/3]-->[1, times, 20, 2/3]
-                predefine_multi_traj_v1 = torch.stack(predefine_multi_traj_v1, dim=1).squeeze(3)
-            if isinstance(pred_multi_traj_v1, list):  # [1, 20, 1, 2/3]  -> [1, times, 20, 1, 2/3]  -> [1, times, 20, 2/3]
-                pred_multi_traj_v1 = torch.stack(pred_multi_traj_v1, dim=1).squeeze(3)
-            if isinstance(im_reward_targets_v1, list):  # [1,20]  -> [1, times, 20]
-                im_reward_targets_v1 = torch.stack(im_reward_targets_v1, dim=1)
-            # 根据self.future_reward_model_frame_idx来选择pred_multi_traj_v2和fused_future_bev_feat
-            pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]  # 1, times, 2/3
-            future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]  # [1, times, 40000, 256]
-            losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_)
-            losses.update(losses_distill_traj_reward=losses_distill_traj_reward)
+            if self.use_gt_traj_for_distillation:
+                gt_traj = sdc_planning[:, :, :2].unsqueeze(2)   # bs, tims, 1, 2
+                pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]  # 1, times, 2/3
+                future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]  # [1, times, 40000, 256]
+                losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(gt_traj, pred_multi_traj_v2_, future_bev_feats_)
+                losses.update(losses_distill_traj_reward=losses_distill_traj_reward)
+
+            else:
+
+                if pred_multi_traj_v1 is None or pred_multi_traj_v2 is None:
+                    assert False, "pred_multi_traj_v1 or pred_multi_traj_v2 is None"
+                if isinstance(predefine_multi_traj_v1, list):  # [1, 20, 1, 2/3]-->[1, times, 20, 1, 2/3]-->[1, times, 20, 2/3]
+                    predefine_multi_traj_v1 = torch.stack(predefine_multi_traj_v1, dim=1).squeeze(3)
+                if isinstance(pred_multi_traj_v1, list):  # [1, 20, 1, 2/3]  -> [1, times, 20, 1, 2/3]  -> [1, times, 20, 2/3]
+                    pred_multi_traj_v1 = torch.stack(pred_multi_traj_v1, dim=1).squeeze(3)
+                if isinstance(im_reward_targets_v1, list):  # [1,20]  -> [1, times, 20]
+                    im_reward_targets_v1 = torch.stack(im_reward_targets_v1, dim=1)
+                # 根据self.future_reward_model_frame_idx来选择pred_multi_traj_v2和fused_future_bev_feat
+                pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]  # 1, times, 2/3
+                future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]  # [1, times, 40000, 256]
+                losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_)
+                losses.update(losses_distill_traj_reward=losses_distill_traj_reward)
 
 
         return losses
