@@ -416,12 +416,12 @@ class PlanHead_v1(BaseModule):
         '''
         sm_cost_fo = self.cost_function(cost_volume, trajs[:,:,:2], instance_occupancy, drivable_area)
         CS = sm_cost_fo
-
+        bs, _, _ = trajs.size()
         if random_select:
             sample_best_k = self.sample_best_k
             _, KK = torch.topk(CS, sample_best_k, dim=-1, largest=False)   # B,N_sample
             ii = torch.arange(len(trajs))
-            select_traj = trajs[ii[:,None], KK].squeeze(1) # (B, N_sample, 3)
+            select_traj = trajs[ii[:,None], KK].squeeze(1).reshape(bs, sample_best_k, 3) # (B, N_sample, 3)
             reset_k = k - sample_best_k
             select_traj_ = trajs[:, torch.randperm(trajs.shape[1])[:reset_k]]
             select_traj = torch.cat([select_traj, select_traj_], dim=1)

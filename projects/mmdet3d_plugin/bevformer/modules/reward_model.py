@@ -362,7 +362,7 @@ class RewardConvNet(nn.Module):
             x_i = self.reward_head(x_cat_i)
             im_traj_scores_b_i = x_i.reshape(bs, 1)  # bs, 1
             im_traj_scores_b_list.append(im_traj_scores_b_i)
-        im_traj_scores_b = torch.stack(im_traj_scores_b_list, dim=1)  # [bs, times, 1]
+        im_traj_scores_b = torch.stack(im_traj_scores_b_list, dim=1).squeeze(-1)  # [bs, times, 1]-->[bs, times]
         # 得到模型A最佳轨迹的reward
         best_traj_a_reward = im_traj_scores_a[:, torch.arange(times), best_traj_idx.squeeze(0)]  # [bs, times]
         

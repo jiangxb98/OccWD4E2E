@@ -99,6 +99,7 @@ class Drive_OccWorld(BEVFormer):
                  use_plan_query_distillation=False,  # v1  用于plan query的蒸馏
 
                  use_traj_reward_distillation=False,  # simple_plan predict traj reward
+                 use_gt_traj_for_distillation=False,
                  
                  use_traj_anchor=False, # 是否使用候选轨迹用于计算reward，不使用候选轨迹，经过试验发现，效果很差
                  
@@ -132,6 +133,7 @@ class Drive_OccWorld(BEVFormer):
         self.plan_feat_distillation_method = plan_feat_distillation_method
         self.use_fusion_adapter = True if plan_feat_distillation_method == "fusion_adapter" else False
         self.use_traj_reward_distillation = use_traj_reward_distillation
+        self.use_gt_traj_for_distillation = use_gt_traj_for_distillation
         self.use_traj_anchor = use_traj_anchor
 
         if self.use_plan_feat_distillation and self.use_fusion_adapter:
@@ -1086,7 +1088,7 @@ class Drive_OccWorld(BEVFormer):
 
         if self.use_traj_reward_distillation:
             if self.use_gt_traj_for_distillation:
-                gt_traj = sdc_planning[:, :, :2].unsqueeze(2)   # bs, tims, 1, 2
+                gt_traj = sdc_planning[:, :, :2].to(torch.float32).unsqueeze(2)[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]   # bs, tims, 1, 2
                 pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]  # 1, times, 2/3
                 future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]  # [1, times, 40000, 256]
                 losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(gt_traj, pred_multi_traj_v2_, future_bev_feats_)
