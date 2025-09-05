@@ -1,3 +1,4 @@
+import pickle
 import mmcv
 import torch
 from mmcv.runner import force_fp32, auto_fp16
@@ -102,6 +103,8 @@ class Drive_OccWorld(BEVFormer):
                  use_gt_traj_for_distillation=False,
                  
                  use_traj_anchor=False, # 是否使用候选轨迹用于计算reward，不使用候选轨迹，经过试验发现，效果很差
+
+                 record_traj_reward_scores=False,
                  
                  *args,
                  **kwargs,):
@@ -140,6 +143,10 @@ class Drive_OccWorld(BEVFormer):
             self.temporal_fusion_adapter = TemporalFusionAdapter(in_channels=256, n_future=future_pred_frame_num + 1)
         else:
             self.temporal_fusion_adapter = None
+
+        # 定义一个列表，用于记录每个轨迹的reward得分情况
+        self.record_traj_reward_scores = record_traj_reward_scores
+        self.reward_scores = None if not record_traj_reward_scores else []   # traj_reward_scores: [num_traj, reward_nums]
         
         # occ head
         if future_pred_head is not None:
@@ -541,12 +548,21 @@ class Drive_OccWorld(BEVFormer):
         else:
             input_traj = multi_pose_pred
         
+        if self.record_traj_reward_scores:
+            # 将真实的轨迹real_traj和预测的轨迹合并成一个tensor
+            input_traj = torch.cat([real_traj[:, :, :2].reshape(1,1,1,2), input_traj], dim=1)
+
         im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(input_bev, input_traj)  # simtraj_rewards shape: B*self.sim_reward_nums, sample_num
-        
-        
+                
         # 将sim_rewards和sim_traj_rewards转换为0-1之间的值
         # sim_rewards = sim_rewards.sigmoid() if sim_rewards is not None else None
         sim_traj_rewards = sim_traj_rewards.sigmoid() if sim_traj_rewards is not None else None
+
+        if self.record_traj_reward_scores:
+            record_traj_rewards = torch.cat([im_traj_rewards.detach().clone(), sim_traj_rewards.detach().clone()], dim=-1)
+            # 将imitation的结果合并到sim
+            print('best_traj_reward_score_idx: ', record_traj_rewards.argmax(dim=-1))
+            self.reward_scores.append(record_traj_rewards)
 
         if self.training:
             if im_traj_rewards is not None and self.use_im_reward:
@@ -1502,6 +1518,15 @@ class Drive_OccWorld(BEVFormer):
             # 抛出参数异常
             # 在use_autoregressive_plan和use_simple_plan中至少为True
             raise ValueError('use_autoregressive_plan: {} and use_simple_plan: {} must be True at least one'.format(self.use_autoregressive_plan, self.use_simple_plan))
+        
+        if self.record_traj_reward_scores:
+            file_name = 'work_dirs/traj_reward_scores.pkl'
+            if not os.path.exists(file_name):
+                os.makedirs(os.path.dirname(file_name), exist_ok=True)
+            # 奖结果保存在一个pkl文件中，写入规则是追加写入
+            with open(file_name, 'ab') as f:
+                pickle.dump(self.reward_scores, f)
+        
         return test_output
 
 
