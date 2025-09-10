@@ -85,6 +85,7 @@ class RewardConvNet(nn.Module):
                  use_sim_reward: bool = False,
                  use_im_reward: bool = False,
                  extra_bev_adapter: bool = False,
+                 if_detach_sim: bool = False,
                  ):
         super(RewardConvNet, self).__init__()
         
@@ -95,7 +96,7 @@ class RewardConvNet(nn.Module):
         self.use_sim_reward = use_sim_reward
         self.use_im_reward = use_im_reward
         self.extra_bev_adapter = extra_bev_adapter
-
+        self.if_detach_sim = if_detach_sim
         if self.extra_bev_adapter:
             bevformer_bev_conf = {
                 'xbound': [-51.2, 51.2, 0.512],
@@ -291,7 +292,8 @@ class RewardConvNet(nn.Module):
         if self.use_sim_reward:
             sim_reward_scores = []
             for i in range(self.sim_reward_nums):
-                x_sim = self.sim_reward_heads[i](x_cat)
+                input_x_cat = x_cat.detach().clone() if self.if_detach_sim else x_cat
+                x_sim = self.sim_reward_heads[i](input_x_cat)
                 x_sim = x_sim.reshape(bs, num_traj)
                 sim_reward_scores.append(x_sim)
             # mean for sim reward

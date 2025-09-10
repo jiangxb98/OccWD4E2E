@@ -101,10 +101,15 @@ class Drive_OccWorld(BEVFormer):
 
                  use_traj_reward_distillation=False,  # simple_plan predict traj reward
                  use_gt_traj_for_distillation=False,
+                 if_detach_bev=False,  # 这个是针对使用gt traj的reward进行蒸馏时配合bev_feat distill，怀疑这里影响了bev_feat的蒸馏
+
+                 plan_distill_weight=dict(plan_query_distillation=1.0, plan_feat_distillation=1.0, traj_reward_distillation=1.0),
                  
                  use_traj_anchor=False, # 是否使用候选轨迹用于计算reward，不使用候选轨迹，经过试验发现，效果很差
 
                  record_traj_reward_scores=False,
+                 start_simulation_loss_epoch=99999,
+                 start_pred_occ_epoch=99999,
                  
                  *args,
                  **kwargs,):
@@ -136,8 +141,13 @@ class Drive_OccWorld(BEVFormer):
         self.plan_feat_distillation_method = plan_feat_distillation_method
         self.use_fusion_adapter = True if plan_feat_distillation_method == "fusion_adapter" else False
         self.use_traj_reward_distillation = use_traj_reward_distillation
+        self.if_detach_bev = if_detach_bev
         self.use_gt_traj_for_distillation = use_gt_traj_for_distillation
+        self.plan_distill_weight = plan_distill_weight
         self.use_traj_anchor = use_traj_anchor
+
+        self.start_simulation_loss_epoch = start_simulation_loss_epoch
+        self.start_pred_occ_epoch = start_pred_occ_epoch
 
         if self.use_plan_feat_distillation and self.use_fusion_adapter:
             self.temporal_fusion_adapter = TemporalFusionAdapter(in_channels=256, n_future=future_pred_frame_num + 1)
@@ -550,16 +560,20 @@ class Drive_OccWorld(BEVFormer):
         
         if self.record_traj_reward_scores:
             # 将真实的轨迹real_traj和预测的轨迹合并成一个tensor
-            input_traj = torch.cat([real_traj[:, :, :2].reshape(1,1,1,2), input_traj], dim=1)
-
-        im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(input_bev, input_traj)  # simtraj_rewards shape: B*self.sim_reward_nums, sample_num
-                
+            input_traj = torch.cat([real_traj[:, :2].reshape(1,1,1,2), input_traj], dim=1).to(torch.float32)
+        if self.if_detach_bev:
+            im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(input_bev.detach().clone(), input_traj)  # simtraj_rewards shape: B*self.sim_reward_nums, sample_num
+        else:
+            im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(input_bev, input_traj)        
         # 将sim_rewards和sim_traj_rewards转换为0-1之间的值
         # sim_rewards = sim_rewards.sigmoid() if sim_rewards is not None else None
         sim_traj_rewards = sim_traj_rewards.sigmoid() if sim_traj_rewards is not None else None
 
         if self.record_traj_reward_scores:
-            record_traj_rewards = torch.cat([im_traj_rewards.detach().clone(), sim_traj_rewards.detach().clone()], dim=-1)
+            if sim_traj_rewards is not None:
+                record_traj_rewards = torch.cat([im_traj_rewards.detach().clone(), sim_traj_rewards.detach().clone()], dim=0)  # [1,21]+[5,21]-->[6,21]
+            else:
+                record_traj_rewards = im_traj_rewards.detach().clone()
             # 将imitation的结果合并到sim
             print('best_traj_reward_score_idx: ', record_traj_rewards.argmax(dim=-1))
             self.reward_scores.append(record_traj_rewards)
@@ -576,6 +590,8 @@ class Drive_OccWorld(BEVFormer):
             # 注意这里存在问题，sim_rewards可能都是1，那么选最大的就是默认第一个了
             if sim_rewards is not None and sim_traj_rewards is not None and self.use_sim_reward:
                 sim_reward_loss = compute_sim_reward_loss(sim_rewards, sim_traj_rewards)
+                if self.training_epoch >= self.start_simulation_loss_epoch:
+                    sim_reward_loss = sim_reward_loss * 0.  # 设置为0，不计算模拟损失
             else:
                 sim_reward_loss = None
             # 这个地方应该是选择一个最好的轨迹
@@ -794,7 +810,7 @@ class Drive_OccWorld(BEVFormer):
                 # forward plan_head 
                 if 'v1' in self.plan_head_type:    # used for fine-grained_MMO when sem_occupancy distinguish categories in MMO
                     # sem_occupancy
-                    if plan_dict['sem_occupancy'] is None:   # use_pred
+                    if plan_dict['sem_occupancy'] is None or self.training_epoch >= self.start_pred_occ_epoch:   # use_pred
                         sem_occupancy_i = future_pred_head.forward_head(pred_feat.unsqueeze(0))[-1, -1, 0].argmax(-1).detach()
                         bs, hw, d = sem_occupancy_i.shape
                         sem_occupancy_i = sem_occupancy_i.view(bs, self.bev_w, self.bev_h, d).transpose(1,2)
@@ -1092,14 +1108,14 @@ class Drive_OccWorld(BEVFormer):
             losses.update(losses_v2)
 
         if self.use_plan_feat_distillation:
-            losses_distill_bev_feat = self.loss_bev(fused_future_bev_feat, ref_bev)
+            losses_distill_bev_feat = self.loss_bev(fused_future_bev_feat, ref_bev) * self.plan_distill_weight['plan_feat_distillation']
             losses.update(losses_distill_bev_feat=losses_distill_bev_feat)
         if self.use_plan_query_distillation:
             if plan_query_v1 is None or plan_query_v2 is None:
                 assert False, "plan_query_v1 or plan_query_v2 is None"
             if isinstance(plan_query_v1, list):
                 plan_query_v1 = torch.cat(plan_query_v1, dim=1)
-            losses_distill_plan_query = self.loss_bev(plan_query_v1, plan_query_v2)
+            losses_distill_plan_query = self.loss_bev(plan_query_v1, plan_query_v2) * self.plan_distill_weight['plan_query_distillation']
             losses.update(losses_distill_plan_query=losses_distill_plan_query)
 
         if self.use_traj_reward_distillation:
@@ -1107,7 +1123,7 @@ class Drive_OccWorld(BEVFormer):
                 gt_traj = sdc_planning[:, :, :2].to(torch.float32).unsqueeze(2)[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]   # bs, tims, 1, 2
                 pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]  # 1, times, 2/3
                 future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]  # [1, times, 40000, 256]
-                losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(gt_traj, pred_multi_traj_v2_, future_bev_feats_)
+                losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(gt_traj, pred_multi_traj_v2_, future_bev_feats_) * self.plan_distill_weight['traj_reward_distillation']
                 losses.update(losses_distill_traj_reward=losses_distill_traj_reward)
 
             else:
@@ -1123,7 +1139,7 @@ class Drive_OccWorld(BEVFormer):
                 # 根据self.future_reward_model_frame_idx来选择pred_multi_traj_v2和fused_future_bev_feat
                 pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]  # 1, times, 2/3
                 future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]  # [1, times, 40000, 256]
-                losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_)
+                losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_) * self.plan_distill_weight['traj_reward_distillation']
                 losses.update(losses_distill_traj_reward=losses_distill_traj_reward)
 
 

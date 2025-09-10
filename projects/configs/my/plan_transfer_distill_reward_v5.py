@@ -91,10 +91,14 @@ freeze_model_name = ['img_backbone', 'img_neck', 'pts_bbox_head', 'plan_head', '
 unfreeze_model_name = None
 use_simple_plan = True
 use_autoregressive_plan = True
-use_plan_query_distillation = False
-use_plan_feat_distillation = False
+use_plan_query_distillation = True
+use_plan_feat_distillation = True
 use_traj_reward_distillation = True
-use_gt_traj_for_distillation = True   # 使用GT轨迹进行蒸馏
+use_gt_traj_for_distillation = True
+# 添加蒸馏权重超参数
+plan_distill_weight = dict(plan_query_distillation=1.0, plan_feat_distillation=0.1, traj_reward_distillation=1.0)  # [plan_query_distillation, plan_feat_distillation, traj_reward_distillation]
+# 是否detach bev feature to the reward model
+if_detach_bev = False
 
 loss_bev=dict(type='MSELoss', loss_weight=1.0)
 
@@ -148,6 +152,8 @@ model = dict(
     use_plan_feat_distillation=use_plan_feat_distillation,
     use_traj_reward_distillation=use_traj_reward_distillation,
     use_gt_traj_for_distillation=use_gt_traj_for_distillation,
+    plan_distill_weight=plan_distill_weight,
+    if_detach_bev=if_detach_bev,
     loss_bev=loss_bev,
 
     # Predict frame num.

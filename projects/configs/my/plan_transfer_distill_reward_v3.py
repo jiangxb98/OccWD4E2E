@@ -91,10 +91,10 @@ freeze_model_name = ['img_backbone', 'img_neck', 'pts_bbox_head', 'plan_head', '
 unfreeze_model_name = None
 use_simple_plan = True
 use_autoregressive_plan = True
-use_plan_query_distillation = False
+use_plan_query_distillation = True
 use_plan_feat_distillation = False
 use_traj_reward_distillation = True
-use_gt_traj_for_distillation = True   # 使用GT轨迹进行蒸馏
+use_gt_traj_for_distillation = True
 
 loss_bev=dict(type='MSELoss', loss_weight=1.0)
 

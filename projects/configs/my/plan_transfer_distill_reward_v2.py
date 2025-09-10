@@ -86,6 +86,7 @@ bev_w_ = 200
 pred_height = 16
 
 # 将自回归的冻结住
+# 使用gt轨迹的reward进行蒸馏的时候，注意经过实验测试，reward_model如果解冻的话效果会更好
 freeze_model_name = ['img_backbone', 'img_neck', 'pts_bbox_head', 'plan_head', 'future_pred_head']
 unfreeze_model_name = None
 use_simple_plan = True
@@ -93,6 +94,8 @@ use_autoregressive_plan = True
 use_plan_query_distillation = True
 use_plan_feat_distillation = True
 use_traj_reward_distillation = True
+use_gt_traj_for_distillation = True  # 使用GT轨迹进行蒸馏
+
 loss_bev=dict(type='MSELoss', loss_weight=1.0)
 
 find_unused_parameters=False  #  pts_bbox_head_v2.code_weights.requires_grad alwarys is False
@@ -144,6 +147,7 @@ model = dict(
     use_plan_query_distillation=use_plan_query_distillation,
     use_plan_feat_distillation=use_plan_feat_distillation,
     use_traj_reward_distillation=use_traj_reward_distillation,
+    use_gt_traj_for_distillation=use_gt_traj_for_distillation,
     loss_bev=loss_bev,
 
     # Predict frame num.
