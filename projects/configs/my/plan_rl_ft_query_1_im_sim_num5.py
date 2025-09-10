@@ -100,6 +100,12 @@ plan_traj_for_sim_reward_epoch = 999999   # 这个是启动simulation reward的e
 random_select = True
 use_gt_occ_for_sim_reward = True
 
+# for inference
+imitation_for_inference = False
+simulation_for_inference = False
+all_reward_for_inference = True
+
+
 model = dict(
     type='Drive_OccWorld',
     turn_on_flow=turn_on_flow,
@@ -125,7 +131,10 @@ model = dict(
         use_sim_reward=use_sim_reward,
         use_im_reward=use_im_reward,
     ),
-
+    # for inference
+    imitation_for_inference=imitation_for_inference,
+    simulation_for_inference=simulation_for_inference,
+    all_reward_for_inference=all_reward_for_inference,
     # BEV configuration.
     point_cloud_range=point_cloud_range,
     bev_h=bev_h_,

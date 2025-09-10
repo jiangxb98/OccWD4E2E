@@ -110,6 +110,11 @@ class Drive_OccWorld(BEVFormer):
                  record_traj_reward_scores=False,
                  start_simulation_loss_epoch=99999,
                  start_pred_occ_epoch=99999,
+
+                 # for inference
+                 imitation_for_inference=False,
+                 simulation_for_inference=False,
+                 all_reward_for_inference=False,
                  
                  *args,
                  **kwargs,):
@@ -145,6 +150,11 @@ class Drive_OccWorld(BEVFormer):
         self.use_gt_traj_for_distillation = use_gt_traj_for_distillation
         self.plan_distill_weight = plan_distill_weight
         self.use_traj_anchor = use_traj_anchor
+
+        # for inference
+        self.imitation_for_inference = imitation_for_inference
+        self.simulation_for_inference = simulation_for_inference
+        self.all_reward_for_inference = all_reward_for_inference
 
         self.start_simulation_loss_epoch = start_simulation_loss_epoch
         self.start_pred_occ_epoch = start_pred_occ_epoch
@@ -539,7 +549,7 @@ class Drive_OccWorld(BEVFormer):
         # 这里需要改成可以控制只使用imitation reward或者simulation reward或者两者都使用
         # multi_pose_pred: [bs, sample_traj_nums, planning_steps, 2]
         # multi_traj:      [bs, sample_traj_nums, planning_steps, 2]
-        multi_pose_pred, pose_loss, multi_traj, sim_rewards, plan_query, adapter_bev_feats = self.plan_head(bev, sample_traj, sem_occupancy, 
+        multi_pose_pred, pose_loss, multi_traj, sim_rewards_targets, plan_query, adapter_bev_feats = self.plan_head(bev, sample_traj, sem_occupancy, 
                                                                        command, real_traj, is_multi_traj, 
                                                                        self.training_epoch, self.use_plan_query_distillation, vel_steering)
         # 这个地方需要更改，这里计算rewards的时候，是用pose_pred还是multi_traj呢？
@@ -566,7 +576,7 @@ class Drive_OccWorld(BEVFormer):
         else:
             im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(input_bev, input_traj)        
         # 将sim_rewards和sim_traj_rewards转换为0-1之间的值
-        # sim_rewards = sim_rewards.sigmoid() if sim_rewards is not None else None
+        # sim_rewards_targets = sim_rewards_targets.sigmoid() if sim_rewards_targets is not None else None
         sim_traj_rewards = sim_traj_rewards.sigmoid() if sim_traj_rewards is not None else None
 
         if self.record_traj_reward_scores:
@@ -588,8 +598,8 @@ class Drive_OccWorld(BEVFormer):
                 
             # 2. sim_loss, 根据世界模型的输出，计算sim_loss
             # 注意这里存在问题，sim_rewards可能都是1，那么选最大的就是默认第一个了
-            if sim_rewards is not None and sim_traj_rewards is not None and self.use_sim_reward:
-                sim_reward_loss = compute_sim_reward_loss(sim_rewards, sim_traj_rewards)
+            if sim_rewards_targets is not None and sim_traj_rewards is not None and self.use_sim_reward:
+                sim_reward_loss = compute_sim_reward_loss(sim_rewards_targets, sim_traj_rewards)
                 if self.training_epoch >= self.start_simulation_loss_epoch:
                     sim_reward_loss = sim_reward_loss * 0.  # 设置为0，不计算模拟损失
             else:
@@ -603,12 +613,24 @@ class Drive_OccWorld(BEVFormer):
                 all_rewards = im_reward_targets
                 max_reward_idx = all_rewards.argmax()
                 pose_pred = multi_pose_pred[:, max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
-            elif self.use_sim_reward and not self.use_im_reward and sim_rewards is not None:
+            elif self.use_sim_reward and not self.use_im_reward and sim_rewards_targets is not None:
+                # simulation的话，究竟是距离最近的轨迹点，还是rewards_targets最大的呢？
                 all_rewards = im_reward_targets
                 max_reward_idx = all_rewards.argmax()
                 pose_pred = multi_pose_pred[:, max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
-            elif self.use_im_reward and self.use_sim_reward and im_traj_rewards is not None and sim_rewards is not None:
-                all_rewards = im_reward_targets
+            elif self.use_im_reward and self.use_sim_reward and im_traj_rewards is not None and sim_rewards_targets is not None:
+                all_rewards = 0
+                w = [0.1, 0.5, 0.5, 1.0, 1.0]
+                if self.use_sim_reward:
+                    S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = sim_rewards_targets
+                    S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1), S_COMFORT.squeeze(-1)
+                    all_rewards = all_rewards + (
+                        w[1] * torch.log(S_NC) +
+                        w[2] * torch.log(S_DAC) +
+                        w[3] * torch.log(5 * S_TTC + 2 * S_COMFORT + 5 * S_EP)
+                    )
+                if self.use_im_reward:
+                    all_rewards = all_rewards + w[0] * torch.log(im_reward_targets)
                 max_reward_idx = all_rewards.argmax()
                 pose_pred = multi_pose_pred[:, max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
             else:
@@ -631,30 +653,42 @@ class Drive_OccWorld(BEVFormer):
 
             # imitation reward is softmax
             # simulation reward is sigmoid
+            if self.imitation_for_inference:
+                all_rewards = im_traj_rewards
+                max_reward_idx = all_rewards.argmax()
+            if self.simulation_for_inference:
+                all_rewards = 0
+                w = [0.1, 0.5, 0.5, 1.0, 1.0]
+                if self.use_sim_reward:
+                    S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = sim_traj_rewards
+                    S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1), S_COMFORT.squeeze(-1)
+                    all_rewards = all_rewards + (
+                        w[1] * torch.log(S_NC) +
+                        w[2] * torch.log(S_DAC) +
+                        w[3] * torch.log(5 * S_TTC + 2 * S_COMFORT + 5 * S_EP)
+                    )
+                    max_reward_idx = all_rewards.argmax()
+            if self.all_reward_for_inference:
+                all_rewards = 0
+                w = [0.1, 0.5, 0.5, 1.0, 1.0]
+                if self.use_sim_reward:
+                    S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = sim_traj_rewards
+                    S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1), S_COMFORT.squeeze(-1)
+                    all_rewards = all_rewards + (
+                        w[1] * torch.log(S_NC) +
+                        w[2] * torch.log(S_DAC) +
+                        w[3] * torch.log(5 * S_TTC + 2 * S_COMFORT + 5 * S_EP)
+                    )
+                    max_reward_idx = all_rewards.argmax()
+                if self.use_im_reward:
+                    all_rewards = all_rewards + w[0] * torch.log(im_traj_rewards)
+                max_reward_idx = all_rewards.argmax()
 
-            all_rewards = 0
-            w = [0.1, 0.5, 0.5, 1.0, 1.0]
-
-            if self.use_sim_reward:
-                S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = sim_traj_rewards
-                S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1), S_COMFORT.squeeze(-1)
-                all_rewards = all_rewards + (
-                    w[1] * torch.log(S_NC) +
-                    w[2] * torch.log(S_DAC) +
-                    w[3] * torch.log(5 * S_TTC + 2 * S_COMFORT + 5 * S_EP)
-                )
-
-            if self.use_im_reward:
-                all_rewards = all_rewards + w[0] * im_traj_rewards
-
-            max_reward_idx = all_rewards.argmax()
             pose_pred = multi_pose_pred[:, max_reward_idx]
 
             im_reward_loss = None
             sim_reward_loss = None
             im_reward_targets = None
-
-
 
         return pose_pred, pose_loss, im_reward_loss, sim_reward_loss, plan_query, multi_traj, multi_pose_pred, im_reward_targets
 

@@ -91,7 +91,7 @@ use_reward_model = True   # 使用奖励模型，True use the imitation reward
 output_multi_traj = True  # 输出多条轨迹
 sample_traj_nums = 20     # 采样轨迹数
 use_sim_reward = True     # 使用simulation reward
-use_im_reward = False      # 使用imitation reward
+use_im_reward = True      # 使用imitation reward
 sim_reward_nums = 5       # simulation reward head nums
 plan_query_nums = 1       # plan query nums
 freeze_model_name = ['img_backbone', 'img_neck', 'future_pred_head', 'pts_bbox_head']
@@ -104,7 +104,6 @@ use_gt_occ_for_sim_reward = True
 imitation_for_inference = False
 simulation_for_inference = True
 all_reward_for_inference = False
-
 
 
 model = dict(
