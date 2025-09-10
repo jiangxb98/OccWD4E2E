@@ -705,7 +705,7 @@ class Drive_OccWorld(BEVFormer):
 
         # C3. PlanHead 
         if 'v1' in self.plan_head_type:
-            if ref_sem_occupancy is None:   # use pred_occupancy to calculate sample_traj cost during inference, GT_occupancy during training
+            if ref_sem_occupancy is None or self.training_epoch >= self.start_pred_occ_epoch:   # use pred_occupancy to calculate sample_traj cost during inference, GT_occupancy during training
                 ref_sem_occupancy = self.future_pred_head.forward_head(ref_bev.unsqueeze(0).unsqueeze(0))[-1, -1, 0].argmax(-1).detach()
                 bs, hw, d = ref_sem_occupancy.shape
                 ref_sem_occupancy = ref_sem_occupancy.view(bs, self.bev_w, self.bev_h, d).transpose(1,2)
