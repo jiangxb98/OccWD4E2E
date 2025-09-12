@@ -75,6 +75,7 @@ class Drive_OccWorld(BEVFormer):
                  _viz_pcd_flag=False,
                  _viz_pcd_path='dbg/pred_pcd',  # root/{prefix}
 
+                 # reward model config
                  use_reward_model=False,  # for imitation reward
                  reward_model=None,
                  freeze_model_name=None,
@@ -83,8 +84,11 @@ class Drive_OccWorld(BEVFormer):
                  random_select_reward_model_frame=False,
                  use_sim_reward=False,  # for simulation reward
                  use_im_reward=False,  # for imitation reward
-                 sim_reward_weight=0.1,  # 得分比例
+                 sim_reward_weight=1.0,  # 得分比例
                  im_reward_weight=1.0,
+                 training_same_as_inference=False,
+
+
                  planning_metric_type='v2',
                  # 这里作者在uni2one中已经将gt的轨迹变为相对的轨迹了，所以需要设置为True
                  cumsum_for_gt_traj=True,  # 是否对gt轨迹进行累积求和, 默认开源的是True，但是对照了UniAD的代码，发现是不需要对gt轨迹进行累积求和的
@@ -107,14 +111,16 @@ class Drive_OccWorld(BEVFormer):
                  
                  use_traj_anchor=False, # 是否使用候选轨迹用于计算reward，不使用候选轨迹，经过试验发现，效果很差
 
-                 record_traj_reward_scores=False,
+                 record_traj_reward_scores=False,  # 是否记录每个轨迹的reward得分
                  start_simulation_loss_epoch=99999,
-                 start_pred_occ_epoch=99999,
+                 start_pred_occ_epoch=99999,   # 这个用预测的occ用于后续的Planning任务开启的epoch，当大于等于的时候就是使用预测的occ进行训练了
 
                  # for inference
-                 imitation_for_inference=False,
-                 simulation_for_inference=False,
-                 all_reward_for_inference=False,
+                 imitation_for_inference=False,   # 是否使用imitation reward进行推理
+                 simulation_for_inference=False,  # 是否使用simulation reward进行推理
+                 all_reward_for_inference=False,  # 是否使用所有reward进行推理
+
+                 distill_epoch_range=dict(plan_feat_distillation=[0, 99999], plan_query_distillation=[0, 99999], traj_reward_distillation=[0, 99999]),
                  
                  *args,
                  **kwargs,):
@@ -130,6 +136,8 @@ class Drive_OccWorld(BEVFormer):
             self.use_im_reward = use_im_reward
             self.sim_reward_weight = sim_reward_weight
             self.im_reward_weight = im_reward_weight
+            self.training_same_as_inference = training_same_as_inference
+
         self.future_reward_model_frame_idx = future_reward_model_frame_idx if future_reward_model_frame_idx is not None else [future_pred_frame_num]
         self.random_select_reward_model_frame = random_select_reward_model_frame
         self.training_epoch = 0
@@ -139,6 +147,7 @@ class Drive_OccWorld(BEVFormer):
         self.use_ref_bev_for_future_bev = use_ref_bev_for_future_bev
         self.use_future_bev_for_supervision = use_future_bev_for_supervision
 
+        # for plan distillation
         self.use_simple_plan = use_simple_plan
         self.use_autoregressive_plan = use_autoregressive_plan
         self.use_plan_feat_distillation = use_plan_feat_distillation
@@ -150,7 +159,8 @@ class Drive_OccWorld(BEVFormer):
         self.use_gt_traj_for_distillation = use_gt_traj_for_distillation
         self.plan_distill_weight = plan_distill_weight
         self.use_traj_anchor = use_traj_anchor
-
+        self.distill_epoch_range = distill_epoch_range
+        
         # for inference
         self.imitation_for_inference = imitation_for_inference
         self.simulation_for_inference = simulation_for_inference
@@ -570,7 +580,8 @@ class Drive_OccWorld(BEVFormer):
         
         if self.record_traj_reward_scores:
             # 将真实的轨迹real_traj和预测的轨迹合并成一个tensor
-            input_traj = torch.cat([real_traj[:, :2].reshape(1,1,1,2), input_traj], dim=1).to(torch.float32)
+            input_traj = torch.cat([real_traj[:, :2].reshape(1, 1, 1, 2), input_traj], dim=1).to(torch.float32)
+            
         if self.if_detach_bev:
             im_traj_rewards, sim_traj_rewards = self.reward_model.forward_single_im_sim(input_bev.detach().clone(), input_traj)  # simtraj_rewards shape: B*self.sim_reward_nums, sample_num
         else:
@@ -619,20 +630,28 @@ class Drive_OccWorld(BEVFormer):
                 max_reward_idx = all_rewards.argmax()
                 pose_pred = multi_pose_pred[:, max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
             elif self.use_im_reward and self.use_sim_reward and im_traj_rewards is not None and sim_rewards_targets is not None:
-                all_rewards = 0
-                w = [0.1, 0.5, 0.5, 1.0, 1.0]
-                if self.use_sim_reward:
-                    S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = sim_rewards_targets
-                    S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1), S_COMFORT.squeeze(-1)
-                    all_rewards = all_rewards + (
-                        w[1] * torch.log(S_NC) +
-                        w[2] * torch.log(S_DAC) +
-                        w[3] * torch.log(5 * S_TTC + 2 * S_COMFORT + 5 * S_EP)
-                    )
-                if self.use_im_reward:
-                    all_rewards = all_rewards + w[0] * torch.log(im_reward_targets)
-                max_reward_idx = all_rewards.argmax()
-                pose_pred = multi_pose_pred[:, max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
+                # 非wote方式，训推一致
+                if self.training_same_as_inference:
+                    all_rewards = 0
+                    w = [0.1, 0.5, 0.5, 1.0, 1.0]
+                    if self.use_sim_reward:
+                        S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = sim_rewards_targets
+                        S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1), S_COMFORT.squeeze(-1)
+                        all_rewards = all_rewards + (
+                            w[1] * torch.log(S_NC) +
+                            w[2] * torch.log(S_DAC) +
+                            w[3] * torch.log(5 * S_TTC + 2 * S_COMFORT + 5 * S_EP)
+                        )
+                    if self.use_im_reward:
+                        all_rewards = all_rewards + w[0] * torch.log(im_reward_targets)
+                    max_reward_idx = all_rewards.argmax()
+                    pose_pred = multi_pose_pred[:, max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
+                # wote方式，训推不一致：训练是直接选择imitation最大的（也就是最靠近gt的）推理则是选择加权最大的reward对应的轨迹输出
+                else:
+                    # 选择最靠近gt轨迹的作为输出，也就是imitation_reward_targets最大的
+                    all_rewards = im_reward_targets
+                    max_reward_idx = all_rewards.argmax()
+                    pose_pred = multi_pose_pred[:, max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]                    
             else:
                 pass
             if max_reward_idx is not None and plan_query is not None:
@@ -1142,14 +1161,24 @@ class Drive_OccWorld(BEVFormer):
             losses.update(losses_v2)
 
         if self.use_plan_feat_distillation:
-            losses_distill_bev_feat = self.loss_bev(fused_future_bev_feat, ref_bev) * self.plan_distill_weight['plan_feat_distillation']
+            losses_distill_bev_feat = self.loss_bev(fused_future_bev_feat, ref_bev)
+            if self.training_epoch >= self.distill_epoch_range['plan_feat_distillation'][0] and self.training_epoch < self.distill_epoch_range['plan_feat_distillation'][1]:
+                losses_distill_bev_feat = losses_distill_bev_feat * self.plan_distill_weight['plan_feat_distillation']
+            else:
+                losses_distill_bev_feat = losses_distill_bev_feat * 0.0
             losses.update(losses_distill_bev_feat=losses_distill_bev_feat)
+
         if self.use_plan_query_distillation:
             if plan_query_v1 is None or plan_query_v2 is None:
                 assert False, "plan_query_v1 or plan_query_v2 is None"
             if isinstance(plan_query_v1, list):
                 plan_query_v1 = torch.cat(plan_query_v1, dim=1)
-            losses_distill_plan_query = self.loss_bev(plan_query_v1, plan_query_v2) * self.plan_distill_weight['plan_query_distillation']
+            losses_distill_plan_query = self.loss_bev(plan_query_v1, plan_query_v2)
+
+            if self.training_epoch >= self.distill_epoch_range['plan_query_distillation'][0] and self.training_epoch < self.distill_epoch_range['plan_query_distillation'][1]:
+                losses_distill_plan_query = losses_distill_plan_query * self.plan_distill_weight['plan_query_distillation']
+            else:
+                losses_distill_plan_query = losses_distill_plan_query * 0.0
             losses.update(losses_distill_plan_query=losses_distill_plan_query)
 
         if self.use_traj_reward_distillation:
@@ -1157,11 +1186,11 @@ class Drive_OccWorld(BEVFormer):
                 gt_traj = sdc_planning[:, :, :2].to(torch.float32).unsqueeze(2)[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]   # bs, tims, 1, 2
                 pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]  # 1, times, 2/3
                 future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]  # [1, times, 40000, 256]
-                losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(gt_traj, pred_multi_traj_v2_, future_bev_feats_) * self.plan_distill_weight['traj_reward_distillation']
-                losses.update(losses_distill_traj_reward=losses_distill_traj_reward)
-
+                if self.if_detach_bev:
+                    losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(gt_traj, pred_multi_traj_v2_, future_bev_feats_.detach().clone()) * self.plan_distill_weight['traj_reward_distillation']
+                else:
+                    losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(gt_traj, pred_multi_traj_v2_, future_bev_feats_) * self.plan_distill_weight['traj_reward_distillation']
             else:
-
                 if pred_multi_traj_v1 is None or pred_multi_traj_v2 is None:
                     assert False, "pred_multi_traj_v1 or pred_multi_traj_v2 is None"
                 if isinstance(predefine_multi_traj_v1, list):  # [1, 20, 1, 2/3]-->[1, times, 20, 1, 2/3]-->[1, times, 20, 2/3]
@@ -1173,8 +1202,17 @@ class Drive_OccWorld(BEVFormer):
                 # 根据self.future_reward_model_frame_idx来选择pred_multi_traj_v2和fused_future_bev_feat
                 pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]  # 1, times, 2/3
                 future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]  # [1, times, 40000, 256]
-                losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_) * self.plan_distill_weight['traj_reward_distillation']
-                losses.update(losses_distill_traj_reward=losses_distill_traj_reward)
+                if self.if_detach_bev:
+                    losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_.detach().clone()) * self.plan_distill_weight['traj_reward_distillation']
+                else:
+                    losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_) * self.plan_distill_weight['traj_reward_distillation']
+            
+            if self.training_epoch >= self.distill_epoch_range['traj_reward_distillation'][0] and self.training_epoch < self.distill_epoch_range['traj_reward_distillation'][1]:
+                losses_distill_traj_reward = losses_distill_traj_reward * self.plan_distill_weight['traj_reward_distillation']
+            else:
+                losses_distill_traj_reward = losses_distill_traj_reward * 0.0
+                
+            losses.update(losses_distill_traj_reward=losses_distill_traj_reward)
 
 
         return losses
@@ -1413,11 +1451,11 @@ class Drive_OccWorld(BEVFormer):
             prev_bev_list = torch.stack(prev_bev_list, dim=1)
             prev_bev_list = torch.cat([prev_bev_list, ref_bev.unsqueeze(1)], dim=1)[:, -self.memory_queue_len:, ...]
             # D2. prepare conditional-normalization dict
-            if self.future_pred_head.prev_render_neck.sem_norm and self.future_pred_head.prev_render_neck.sem_gt_train and self.training_epoch < 12:
+            if self.future_pred_head.prev_render_neck.sem_norm and self.future_pred_head.prev_render_neck.sem_gt_train and self.training_epoch < self.start_pred_occ_epoch:
                 occ_gts = segmentation[0][self.future_pred_head.history_queue_length+1-self.memory_queue_len:-1]
                 occ_gts = F.interpolate(occ_gts.unsqueeze(1), size=(self.bev_h, self.bev_w, self.future_pred_head.prev_render_neck.pred_height), mode='nearest').transpose(0,1)
             else:
-                occ_gts = None
+                occ_gts = None    # 20250912如果是收敛好的，那么就是None，所以在训练reward model时，这个也为None试试，同理下面的sem_occupancy也是
             cond_norm_dict = {'occ_gts': occ_gts}
             # D3. prepare action condition dict
             action_condition_dict = {'command':command, 'vel_steering': vel_steering}
