@@ -100,7 +100,7 @@ plan_traj_for_sim_reward_epoch = 999999   # 这个是启动simulation reward的e
 random_select = True
 use_gt_occ_for_sim_reward = True
 if_detach_sim = True
-training_same_as_inference = False
+training_same_as_inference = True
 
 # for inference
 imitation_for_inference = False

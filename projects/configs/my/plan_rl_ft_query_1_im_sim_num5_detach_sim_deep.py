@@ -101,6 +101,7 @@ random_select = True
 use_gt_occ_for_sim_reward = True
 if_detach_sim = True
 training_same_as_inference = False
+deep_sim_heads = True
 
 # for inference
 imitation_for_inference = False
@@ -134,6 +135,7 @@ model = dict(
         use_sim_reward=use_sim_reward,
         use_im_reward=use_im_reward,
         if_detach_sim=if_detach_sim,
+        deep_sim_heads=deep_sim_heads,
     ),
     # for inference
     imitation_for_inference=imitation_for_inference,

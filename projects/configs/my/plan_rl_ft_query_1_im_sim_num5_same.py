@@ -99,8 +99,8 @@ future_reward_model_frame_idx = [1, 2, 3, 4, 5]
 plan_traj_for_sim_reward_epoch = 999999   # 这个是启动simulation reward的epoch，小于这个数就是用初始化的多模轨迹来计算sim_reward
 random_select = True
 use_gt_occ_for_sim_reward = True
-if_detach_sim = True
-training_same_as_inference = False
+training_same_as_inference = True
+
 
 # for inference
 imitation_for_inference = False
@@ -133,7 +133,6 @@ model = dict(
         sim_reward_nums=sim_reward_nums,
         use_sim_reward=use_sim_reward,
         use_im_reward=use_im_reward,
-        if_detach_sim=if_detach_sim,
     ),
     # for inference
     imitation_for_inference=imitation_for_inference,

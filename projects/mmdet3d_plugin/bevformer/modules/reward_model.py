@@ -86,6 +86,7 @@ class RewardConvNet(nn.Module):
                  use_im_reward: bool = False,
                  extra_bev_adapter: bool = False,
                  if_detach_sim: bool = False,
+                 deep_sim_heads: bool = False,  # 是否使用更深层的网络计算sim reward
                  ):
         super(RewardConvNet, self).__init__()
         
@@ -97,6 +98,7 @@ class RewardConvNet(nn.Module):
         self.use_im_reward = use_im_reward
         self.extra_bev_adapter = extra_bev_adapter
         self.if_detach_sim = if_detach_sim
+        self.deep_sim_heads = deep_sim_heads
         if self.extra_bev_adapter:
             bevformer_bev_conf = {
                 'xbound': [-51.2, 51.2, 0.512],
@@ -169,13 +171,24 @@ class RewardConvNet(nn.Module):
         # for sim reward
         self.sim_reward_heads = None
         if self.sim_reward_nums > 0 and self.use_sim_reward:
-            self.sim_reward_heads = nn.ModuleList([
-                nn.Sequential(
-                    nn.Linear(hidden_dim, 128),
-                    nn.ReLU(),
-                    nn.Linear(128, 1),
-                ) for _ in range(self.sim_reward_nums)
-            ])
+            if self.deep_sim_heads:
+                self.sim_reward_heads = nn.ModuleList([
+                    nn.Sequential(
+                        nn.Linear(hidden_dim, 128),
+                        nn.ReLU(),
+                        nn.Linear(128, 128),
+                        nn.ReLU(),
+                        nn.Linear(128, 1),
+                    ) for _ in range(self.sim_reward_nums)
+                ])
+            else:
+                self.sim_reward_heads = nn.ModuleList([
+                    nn.Sequential(
+                        nn.Linear(hidden_dim, 128),
+                        nn.ReLU(),
+                        nn.Linear(128, 1),
+                    ) for _ in range(self.sim_reward_nums)
+                ])
 
     def forward_multi(self, fut_bev_feature, traj) -> torch.Tensor:
         """
