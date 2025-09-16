@@ -100,7 +100,7 @@ future_reward_model_frame_idx = [1, 2, 3, 4, 5]
 plan_traj_for_sim_reward_epoch = 999999   # 这个是启动simulation reward的epoch
 random_select = True
 use_gt_occ_for_sim_reward = True
-start_pred_occ_epoch = 999999  # 从哪个epoch开始使用预测的occupancy来计算reward
+start_pred_occ_epoch = 0  # 从哪个epoch开始使用预测的occupancy来计算sim_reward
 
 model = dict(
     type='Drive_OccWorld',

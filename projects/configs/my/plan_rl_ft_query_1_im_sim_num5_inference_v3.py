@@ -86,21 +86,25 @@ bev_w_ = 200
 pred_height = 16
 
 # for reward model
-sample_num = 1800
-use_reward_model = True   # 使用奖励模型
+
+use_reward_model = True   # 使用奖励模型，True use the imitation reward
 output_multi_traj = True  # 输出多条轨迹
 sample_traj_nums = 20     # 采样轨迹数
-sample_best_k = 5
-use_sim_reward = False    # 使用simulation reward
+use_sim_reward = True     # 使用simulation reward
 use_im_reward = True      # 使用imitation reward
-sim_reward_nums = 1       # simulation reward head nums
+sim_reward_nums = 5       # simulation reward head nums
 plan_query_nums = 1       # plan query nums
 freeze_model_name = ['img_backbone', 'img_neck', 'future_pred_head', 'pts_bbox_head']
 future_reward_model_frame_idx = [1, 2, 3, 4, 5]
-plan_traj_for_sim_reward_epoch = 999999   # 这个是启动simulation reward的epoch
+plan_traj_for_sim_reward_epoch = 999999   # 这个是启动simulation reward的epoch，小于这个数就是用初始化的多模轨迹来计算sim_reward
 random_select = True
 use_gt_occ_for_sim_reward = True
-start_pred_occ_epoch = 999999  # 从哪个epoch开始使用预测的occupancy来计算reward
+
+# for inference
+imitation_for_inference = False
+simulation_for_inference = False
+all_reward_for_inference = True
+
 
 model = dict(
     type='Drive_OccWorld',
@@ -117,7 +121,6 @@ model = dict(
     # Reward model config
     use_reward_model=use_reward_model,
     future_reward_model_frame_idx=future_reward_model_frame_idx,
-    start_pred_occ_epoch=start_pred_occ_epoch,
     reward_model=dict(
         type='RewardConvNet',
         bev_h=bev_h_,
@@ -128,7 +131,10 @@ model = dict(
         use_sim_reward=use_sim_reward,
         use_im_reward=use_im_reward,
     ),
-
+    # for inference
+    imitation_for_inference=imitation_for_inference,
+    simulation_for_inference=simulation_for_inference,
+    all_reward_for_inference=all_reward_for_inference,
     # BEV configuration.
     point_cloud_range=point_cloud_range,
     bev_h=bev_h_,
@@ -339,13 +345,12 @@ model = dict(
         plan_grid_conf=plan_grid_conf,
         bev_h=bev_h_,
         bev_w=bev_w_,
-        sample_num=sample_num,
         output_multi_traj=output_multi_traj,
         sample_traj_nums=sample_traj_nums,
-        sample_best_k=sample_best_k,
         random_select=random_select,
         use_sim_reward=use_sim_reward,
         use_im_reward=use_im_reward,
+        sim_reward_nums=sim_reward_nums,
         use_gt_occ_for_sim_reward=use_gt_occ_for_sim_reward,
         plan_query_nums=plan_query_nums,
         plan_traj_for_sim_reward_epoch=plan_traj_for_sim_reward_epoch,
@@ -447,7 +452,6 @@ data = dict(
         use_separate_classes=use_separate_classes,
         use_fine_occ=use_fine_occ,
         turn_on_flow=turn_on_flow,
-        sample_num=sample_num,
         modality=input_modality,
         test_mode=False,
         use_valid_flag=True,
@@ -467,7 +471,6 @@ data = dict(
              use_separate_classes=use_separate_classes,
              use_fine_occ=use_fine_occ,
              turn_on_flow=turn_on_flow,
-             sample_num=sample_num,
              classes=class_names, modality=input_modality, samples_per_gpu=1,
 
              # some evaluation configuration.
@@ -483,7 +486,6 @@ data = dict(
               use_separate_classes=use_separate_classes,
               use_fine_occ=use_fine_occ,
               turn_on_flow=turn_on_flow,
-              sample_num=sample_num,
               classes=class_names, modality=input_modality,
 
               # some evaluation configuration.
