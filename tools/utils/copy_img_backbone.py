@@ -1,9 +1,13 @@
+######################################################################
+# 这个脚本用于将一个pretrained模型的img_backbone和img_neck参数复制到另一个模型中
+######################################################################
+
 import torch
 import copy
 
 # 加载模型
 path = 'work_dirs/action_condition_MMO_MSO_plan_wo_gt_from_scratch/epoch_24.pth'
-path_2 = 'pretrained/r101_dcn_fcos3d_pretrain.pth'
+path_2 = 'pretrained/r101_dcn_fcos3d_pretrain.pth'  # 预训练模型
 model = torch.load(path)
 model_2 = torch.load(path_2)
 
