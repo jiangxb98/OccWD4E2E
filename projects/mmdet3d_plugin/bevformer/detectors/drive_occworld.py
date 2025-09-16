@@ -96,7 +96,8 @@ class Drive_OccWorld(BEVFormer):
                  loss_bev=None,
                  use_ref_bev_for_future_bev=False,
                  use_future_bev_for_supervision=False,  # 用于future img的蒸馏
-
+                 
+                 # for planning distillation
                  use_simple_plan=False,  # v2
                  use_autoregressive_plan=True,  # v1
                  use_plan_feat_distillation=False,   # v1  用于plan bev特征的蒸馏
@@ -106,7 +107,7 @@ class Drive_OccWorld(BEVFormer):
                  use_traj_reward_distillation=False,  # simple_plan predict traj reward
                  use_gt_traj_for_distillation=False,
                  if_detach_bev=False,  # 这个是针对使用gt traj的reward进行蒸馏时配合bev_feat distill，怀疑这里影响了bev_feat的蒸馏
-
+                 detach_future_bev_feat=False,  # 是否使用detach的bev_feat进行bev_feat的蒸馏
                  plan_distill_weight=dict(plan_query_distillation=1.0, plan_feat_distillation=1.0, traj_reward_distillation=1.0),
                  
                  use_traj_anchor=False, # 是否使用候选轨迹用于计算reward，不使用候选轨迹，经过试验发现，效果很差
@@ -160,6 +161,7 @@ class Drive_OccWorld(BEVFormer):
         self.plan_distill_weight = plan_distill_weight
         self.use_traj_anchor = use_traj_anchor
         self.distill_epoch_range = distill_epoch_range
+        self.detach_future_bev_feat = detach_future_bev_feat
         
         # for inference
         self.imitation_for_inference = imitation_for_inference
@@ -1549,15 +1551,15 @@ class Drive_OccWorld(BEVFormer):
             if self.use_plan_feat_distillation:
                 # 如果是使用自回归的结果去蒸馏，则用这个
                 # pred_future_bev_feat: (6, 3, bs, HxW, C)->(bs, 6, HxW, C)
-                
+                pred_future_bev_feat_last_ = pred_future_bev_feat_last.detach().clone() if self.if_detach_future_bev_feat else pred_future_bev_feat_last
                 if self.plan_feat_distillation_method == "fusion_adapter":
-                    pred_future_bev_feat_ = self.temporal_fusion_adapter(pred_future_bev_feat_last)
+                    pred_future_bev_feat_ = self.temporal_fusion_adapter(pred_future_bev_feat_last_)
                 elif self.plan_feat_distillation_method == "mean":
-                    pred_future_bev_feat_ = torch.mean(pred_future_bev_feat_last, dim=1)
+                    pred_future_bev_feat_ = torch.mean(pred_future_bev_feat_last_, dim=1)
                 elif self.plan_feat_distillation_method == "max":
-                    pred_future_bev_feat_ = torch.max(pred_future_bev_feat_last, dim=1)
+                    pred_future_bev_feat_ = torch.max(pred_future_bev_feat_last_, dim=1)
                 elif isinstance(self.plan_feat_distillation_method, int):
-                    pred_future_bev_feat_ = pred_future_bev_feat_last[:, self.plan_feat_distillation_method, ...]
+                    pred_future_bev_feat_ = pred_future_bev_feat_last_[:, self.plan_feat_distillation_method, ...]
                 else:
                     raise ValueError(f"plan_feat_distillation_method: {self.plan_feat_distillation_method} is not supported")
             else:

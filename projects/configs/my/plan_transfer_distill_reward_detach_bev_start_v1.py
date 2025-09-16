@@ -156,6 +156,7 @@ model = dict(
     use_gt_traj_for_distillation=use_gt_traj_for_distillation,
     plan_distill_weight=plan_distill_weight,
     if_detach_bev=if_detach_bev,
+    distill_epoch_range=distill_epoch_range,
     loss_bev=loss_bev,
 
     # Predict frame num.
