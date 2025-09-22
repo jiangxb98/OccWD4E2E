@@ -104,9 +104,10 @@ class Drive_OccWorld(BEVFormer):
                  use_plan_feat_distillation=False,   # v1  用于plan bev特征的蒸馏
                  plan_feat_distillation_method="fusion_adapter",
                  use_plan_query_distillation=False,  # v1  用于plan query的蒸馏
-
                  use_traj_reward_distillation=False,  # simple_plan predict traj reward
                  use_gt_traj_for_distillation=False,
+                 use_sim_reward_for_distillation=False,
+                 use_im_reward_for_distillation=False,
                  if_detach_bev=False,  # 这个是针对使用gt traj的reward进行蒸馏时配合bev_feat distill，怀疑这里影响了bev_feat的蒸馏
                  detach_future_bev_feat=False,  # 是否使用detach的bev_feat进行bev_feat的蒸馏
                  plan_distill_weight=dict(plan_query_distillation=1.0, plan_feat_distillation=1.0, traj_reward_distillation=1.0),
@@ -164,6 +165,8 @@ class Drive_OccWorld(BEVFormer):
         self.use_traj_anchor = use_traj_anchor
         self.distill_epoch_range = distill_epoch_range
         self.detach_future_bev_feat = detach_future_bev_feat
+        self.use_sim_reward_for_distillation = use_sim_reward_for_distillation
+        self.use_im_reward_for_distillation = use_im_reward_for_distillation
         
         # for inference
         self.imitation_for_inference = imitation_for_inference
@@ -1186,14 +1189,22 @@ class Drive_OccWorld(BEVFormer):
             losses.update(losses_distill_plan_query=losses_distill_plan_query)
 
         if self.use_traj_reward_distillation:
+            if self.use_im_reward_for_distillation and not self.use_sim_reward_for_distillation:
+                reward_distillation_alignment_func = self.reward_model.reward_distillation_alignment_with_im
+            elif self.use_sim_reward_for_distillation and not self.use_im_reward_for_distillation:
+                reward_distillation_alignment_func = self.reward_model.reward_distillation_alignment_with_sim
+            elif self.use_sim_reward_for_distillation and self.use_im_reward_for_distillation:
+                reward_distillation_alignment_func = self.reward_model.reward_distillation_alignment_with_im_sim
+            else:
+                assert False, "not implemented"
             if self.use_gt_traj_for_distillation:
                 gt_traj = sdc_planning[:, :, :2].to(torch.float32).unsqueeze(2)[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]   # bs, tims, 1, 2
                 pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]  # 1, times, 2/3
                 future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]  # [1, times, 40000, 256]
                 if self.if_detach_bev:  # 默认False
-                    losses_distill_traj_reward = self.reward_model.reward_distillation_alignment_with_sim(gt_traj, pred_multi_traj_v2_, future_bev_feats_.detach().clone()) * self.plan_distill_weight['traj_reward_distillation']
+                    losses_distill_traj_reward = reward_distillation_alignment_func(gt_traj, pred_multi_traj_v2_, future_bev_feats_.detach().clone()) * self.plan_distill_weight['traj_reward_distillation']
                 else:
-                    losses_distill_traj_reward = self.reward_model.reward_distillation_alignment_with_sim(gt_traj, pred_multi_traj_v2_, future_bev_feats_) * self.plan_distill_weight['traj_reward_distillation']
+                    losses_distill_traj_reward = reward_distillation_alignment_func(gt_traj, pred_multi_traj_v2_, future_bev_feats_) * self.plan_distill_weight['traj_reward_distillation']
             else:
                 if pred_multi_traj_v1 is None or pred_multi_traj_v2 is None:
                     assert False, "pred_multi_traj_v1 or pred_multi_traj_v2 is None"
@@ -1208,9 +1219,9 @@ class Drive_OccWorld(BEVFormer):
                 future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]  # [1, times, 40000, 256]
                 # losses_distill_traj_reward is a dict
                 if self.if_detach_bev:
-                    losses_distill_traj_reward = self.reward_model.reward_distillation_alignment_with_sim(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_.detach().clone()) * self.plan_distill_weight['traj_reward_distillation']
+                    losses_distill_traj_reward = reward_distillation_alignment_func(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_.detach().clone()) * self.plan_distill_weight['traj_reward_distillation']
                 else:
-                    losses_distill_traj_reward = self.reward_model.reward_distillation_alignment_with_sim(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_) * self.plan_distill_weight['traj_reward_distillation']
+                    losses_distill_traj_reward = reward_distillation_alignment_func(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_) * self.plan_distill_weight['traj_reward_distillation']
             
             if self.training_epoch >= self.distill_epoch_range['traj_reward_distillation'][0] and self.training_epoch < self.distill_epoch_range['traj_reward_distillation'][1]:
                 # losses_distill_traj_reward = losses_distill_traj_reward * self.plan_distill_weight['traj_reward_distillation']

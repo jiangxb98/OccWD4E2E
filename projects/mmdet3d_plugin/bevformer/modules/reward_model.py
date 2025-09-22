@@ -316,7 +316,7 @@ class RewardConvNet(nn.Module):
 
         return im_traj_scores, sim_traj_scores
 
-    def reward_distillation_alignment(self, model_a_trajectories, model_b_trajectory, fut_bev_feature, return_distance_loss=False):
+    def reward_distillation_alignment_with_im(self, model_a_trajectories, model_b_trajectory, fut_bev_feature, return_distance_loss=False):
         """
         使用reward蒸馏实现跨模型对齐
         
@@ -393,7 +393,7 @@ class RewardConvNet(nn.Module):
 
         return losses
 
-    def reward_distillation_alignment_with_sim(self, model_a_trajectories, model_b_trajectory, fut_bev_feature, return_distance_loss=False, sim_reward_weight=1.0):
+    def reward_distillation_alignment_with_im_sim(self, model_a_trajectories, model_b_trajectory, fut_bev_feature, return_distance_loss=False, sim_reward_weight=1.0):
         """
         使用reward蒸馏实现跨模型对齐,同时包含sim reward的loss计算
         

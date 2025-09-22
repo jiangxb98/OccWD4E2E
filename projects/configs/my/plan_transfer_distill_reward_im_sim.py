@@ -95,6 +95,8 @@ use_plan_query_distillation = True
 use_plan_feat_distillation = False
 use_traj_reward_distillation = True
 use_gt_traj_for_distillation = True
+use_sim_reward_for_distillation = True  # 使用simulation reward进行蒸馏(也包含了imitation reward)
+use_im_reward_for_distillation = True
 
 loss_bev=dict(type='MSELoss', loss_weight=1.0)
 
@@ -157,12 +159,15 @@ model = dict(
     bev_h=bev_h_,
     bev_w=bev_w_,
 
+    # for reward distillation
     use_simple_plan=use_simple_plan,
     use_autoregressive_plan=use_autoregressive_plan,
     use_plan_query_distillation=use_plan_query_distillation,
     use_plan_feat_distillation=use_plan_feat_distillation,
     use_traj_reward_distillation=use_traj_reward_distillation,
     use_gt_traj_for_distillation=use_gt_traj_for_distillation,
+    use_sim_reward_for_distillation=use_sim_reward_for_distillation,
+    use_im_reward_for_distillation=use_im_reward_for_distillation,
     loss_bev=loss_bev,
 
     # Predict frame num.
