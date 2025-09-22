@@ -321,7 +321,7 @@ class RewardConvNet(nn.Module):
         使用reward蒸馏实现跨模型对齐
         
         Args:
-            model_a_trajectories: torch.Tensor [bs, times, 20, 2] - 模型A的20个轨迹点
+            model_a_trajectories: torch.Tensor [bs, times, N, 2] - 模型A的N个轨迹点
             model_b_trajectory: torch.Tensor [bs, times, 2] - 模型B的轨迹点, 小模型
             reward_model: 训练好的reward模型
             fut_bev_feature: torch.Tensor [bs, times, bev_h*bev_w, dims] - 未来times帧BEV特征
@@ -350,12 +350,30 @@ class RewardConvNet(nn.Module):
 
         # 使用reward model评估模型a的轨迹
         im_traj_scores_a_list = []
+        sim_traj_scores_a_list = []
+        x_cat_a_list = []
+
         for i in range(times):
             reward_feats_i = reward_feats[:, i, ...].repeat(bs*num_traj, 1, 1, 1).squeeze(-1).squeeze(-1)
             x_cat_i = self.cat_encoder(torch.cat([reward_feats_i, model_a_trajectories_embed[:, i, ...].reshape(bs*num_traj, -1)], dim=1))
+            x_cat_a_list.append(x_cat_i)
+
+            # Imitation reward
             x_i = self.reward_head(x_cat_i)
             im_traj_scores_a_i = x_i.reshape(bs, num_traj)
             im_traj_scores_a_list.append(im_traj_scores_a_i)
+
+            # Simulation reward
+            if self.use_sim_reward:
+                sim_reward_scores_i = []
+                for j in range(self.sim_reward_nums):
+                    input_x_cat_i = x_cat_i.detach().clone() if self.if_detach_sim else x_cat_i
+                    x_sim_i = self.sim_reward_heads[j](input_x_cat_i)
+                    x_sim_i = x_sim_i.reshape(bs, num_traj)  # (bs,)
+                    sim_reward_scores_i.append(x_sim_i)
+                sim_traj_scores_a_i = torch.stack(sim_reward_scores_i, dim=0)  # [sim_reward_nums, bs, num_traj]
+                sim_traj_scores_a_list.append(sim_traj_scores_a_i)
+            
         im_traj_scores_a = torch.stack(im_traj_scores_a_list, dim=1)  # [bs, times, num_traj]
         # 选择最大的reward轨迹的索引
         best_traj_idx = torch.argmax(im_traj_scores_a, dim=2)  # [bs, times]
@@ -389,7 +407,146 @@ class RewardConvNet(nn.Module):
         
         return total_loss
 
+    def reward_distillation_alignment_with_sim(self, model_a_trajectories, model_b_trajectory, fut_bev_feature, return_distance_loss=False, sim_reward_weight=1.0):
+        """
+        使用reward蒸馏实现跨模型对齐,同时包含sim reward的loss计算
+        
+        Args:
+            model_a_trajectories: torch.Tensor [bs, times, N, 2] - 模型A的N个轨迹点
+            model_b_trajectory: torch.Tensor [bs, times, 2] - 模型B的轨迹点, 小模型
+            fut_bev_feature: torch.Tensor [bs, times, bev_h*bev_w, dims] - 未来times帧BEV特征
+            return_distance_loss: bool - 是否返回距离损失
+            sim_reward_weight: float - sim reward损失的权重
+        Returns:
+            total_loss: torch.Tensor - 总损失(包含im reward和sim reward)
+        """
+    
+        bs, times, bev_h_w, dims = fut_bev_feature.shape
+        num_traj = model_a_trajectories.shape[2]
+        assert bs == 1
+        # bs = bs x times
+        # bs = times
+        # 编码未来bev特征
+        fut_bev_feature = fut_bev_feature.reshape(bs*times, bev_h_w, dims)
+        fut_bev_feature = fut_bev_feature.reshape(bs*times, self.bev_h, self.bev_w, dims)
+        fut_bev_feature = fut_bev_feature.permute(0, 3, 1, 2)        
+        reward_feats = self.conv_reward_net(fut_bev_feature)  # [bsxtimes, 256, 1, 1]
+        reward_feats = reward_feats.reshape(bs, times, 256, 1, 1)  # [bs, times, 256, 1, 1]
+        # 编码模型a的轨迹
+        model_a_trajectories_embed = model_a_trajectories.reshape(-1, 2)  # [bs*times*20, 2]
+        model_a_trajectories_embed = self.trajectory_single_encoder(model_a_trajectories_embed)  # [bs*times*20, 256]
+        model_a_trajectories_embed = model_a_trajectories_embed.reshape(bs, times, num_traj, 256)
+        # 编码模型b的轨迹
+        model_b_trajectory_embed = model_b_trajectory.reshape(-1, 2)  # [bs*times, 2]
+        model_b_trajectory_embed = self.trajectory_single_encoder(model_b_trajectory_embed)  # [bs*times, 256]
+        model_b_trajectory_embed = model_b_trajectory_embed.reshape(bs, times, 256)
 
+        # 使用reward model评估模型a的轨迹
+        im_traj_scores_a_list = []
+        sim_traj_scores_a_list = []
+        x_cat_a_list = []
+        
+        for i in range(times):
+            reward_feats_i = reward_feats[:, i, ...].repeat(bs*num_traj, 1, 1, 1).squeeze(-1).squeeze(-1)
+            x_cat_i = self.cat_encoder(torch.cat([reward_feats_i, model_a_trajectories_embed[:, i, ...].reshape(bs*num_traj, -1)], dim=1))
+            x_cat_a_list.append(x_cat_i)
+            # Imitation reward
+            if self.use_im_reward:
+                x_im_i = self.reward_head(x_cat_i)
+                im_traj_scores_a_i = x_im_i.reshape(bs, num_traj)
+                im_traj_scores_a_list.append(im_traj_scores_a_i)
+            
+            # Simulation reward
+            if self.use_sim_reward:
+                sim_reward_scores_i = []
+                for j in range(self.sim_reward_nums):
+                    input_x_cat_i = x_cat_i.detach().clone() if self.if_detach_sim else x_cat_i
+                    x_sim_i = self.sim_reward_heads[j](input_x_cat_i)
+                    x_sim_i = x_sim_i.reshape(bs, num_traj)  # (bs,)
+                    sim_reward_scores_i.append(x_sim_i)
+                sim_traj_scores_a_i = torch.stack(sim_reward_scores_i, dim=0)  # [sim_reward_nums, bs, num_traj]
+                sim_traj_scores_a_list.append(sim_traj_scores_a_i)
+        
+        x_cat_b_list = []
+
+        # 处理imitation reward
+        if self.use_im_reward:
+            im_traj_scores_a = torch.stack(im_traj_scores_a_list, dim=1)  # [bs, times, num_traj]
+            best_traj_idx = torch.argmax(im_traj_scores_a, dim=2)  # [bs, times]
+            best_traj_a = model_a_trajectories[:, torch.arange(times), best_traj_idx.squeeze(0)]  # [bs, times, 2]
+            
+            # 计算模型B的imitation reward
+            im_traj_scores_b_list = []
+            for i in range(times):
+                reward_feats_i = reward_feats[:, i, ...].squeeze(-1).squeeze(-1)
+                x_cat_i = self.cat_encoder(torch.cat([reward_feats_i, model_b_trajectory_embed[:, i, ...]], dim=1))
+                x_cat_b_list.append(x_cat_i)
+                x_im_i = self.reward_head(x_cat_i)
+                im_traj_scores_b_i = x_im_i.reshape(bs, 1)
+                im_traj_scores_b_list.append(im_traj_scores_b_i)
+            im_traj_scores_b = torch.stack(im_traj_scores_b_list, dim=1).squeeze(-1)  # [bs, times]
+            
+            # 得到模型A最佳轨迹的imitation reward
+            best_traj_a_im_reward = im_traj_scores_a[:, torch.arange(times), best_traj_idx.squeeze(0)]  # [bs, times]
+            
+            # Imitation reward对齐损失
+            im_reward_alignment_loss = torch.nn.functional.mse_loss(im_traj_scores_b, best_traj_a_im_reward)
+        else:
+            im_reward_alignment_loss = 0
+            best_traj_a = model_a_trajectories[:, :, 0]  # 使用第一个轨迹作为默认
+
+        # 处理simulation reward
+        if self.use_sim_reward:
+            sim_traj_scores_a = torch.stack(sim_traj_scores_a_list, dim=1)  # [bs, times, sim_reward_nums, num_traj]
+            
+            # 为每个sim reward选择最佳轨迹
+            best_traj_idx_sim = torch.argmax(sim_traj_scores_a, dim=3)  # [bs, times, sim_reward_nums]
+            
+            # 计算模型B的simulation reward
+            sim_traj_scores_b_list = []
+            for i in range(times):
+                # 如果x_cat_b_list不为空，则使用x_cat_b_list中的x_cat_i
+                # 要共用一个x_cat_i，因为x_cat_i是共享的
+                if len(x_cat_b_list) > 0:
+                    x_cat_i = x_cat_b_list[i]
+                else:
+                    reward_feats_i = reward_feats[:, i, ...].squeeze(-1).squeeze(-1)
+                    x_cat_i = self.cat_encoder(torch.cat([reward_feats_i, model_b_trajectory_embed[:, i, ...]], dim=1))
+                
+                sim_reward_scores_b_i = []
+                for j in range(self.sim_reward_nums):
+                    input_x_cat_i = x_cat_i.detach().clone() if self.if_detach_sim else x_cat_i
+                    x_sim_i = self.sim_reward_heads[j](input_x_cat_i)
+                    x_sim_i = x_sim_i.reshape(bs, 1)
+                    sim_reward_scores_b_i.append(x_sim_i)
+                sim_traj_scores_b_i = torch.stack(sim_reward_scores_b_i, dim=0)  # [sim_reward_nums, bs, 1]
+                sim_traj_scores_b_list.append(sim_traj_scores_b_i)
+            
+            sim_traj_scores_b = torch.stack(sim_traj_scores_b_list, dim=1)  # [bs, times, sim_reward_nums]
+            sim_traj_scores_b = sim_traj_scores_b.squeeze(-1)  # [bs, times, sim_reward_nums]
+            
+            # 得到模型A最佳轨迹的simulation reward
+            best_traj_a_sim_reward = torch.gather(
+                sim_traj_scores_a, 
+                dim=3, 
+                index=best_traj_idx_sim.unsqueeze(-1)
+            ).squeeze(-1)  # [bs, times, sim_reward_nums]
+            
+            # Simulation reward对齐损失
+            sim_reward_alignment_loss = torch.nn.functional.mse_loss(sim_traj_scores_b, best_traj_a_sim_reward)
+        else:
+            sim_reward_alignment_loss = 0
+
+        # 计算距离损失（可选）
+        if return_distance_loss:
+            distance_loss = torch.norm(model_b_trajectory - best_traj_a, dim=2).mean()
+        else:
+            distance_loss = 0
+        
+        # 总损失
+        total_loss = distance_loss + im_reward_alignment_loss + sim_reward_weight * sim_reward_alignment_loss
+        
+        return total_loss
 
 class CrossAttentionTransformer(nn.Module):
     """2层transformer用于reward_feats和traj_feats的cross attention交互"""

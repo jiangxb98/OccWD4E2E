@@ -87,6 +87,7 @@ class Drive_OccWorld(BEVFormer):
                  sim_reward_weight=1.0,  # 得分比例
                  im_reward_weight=1.0,
                  training_same_as_inference=False,
+                 reward_weight=[0.1, 0.5, 0.5, 1.0, 1.0],
 
 
                  planning_metric_type='v2',
@@ -138,6 +139,7 @@ class Drive_OccWorld(BEVFormer):
             self.sim_reward_weight = sim_reward_weight
             self.im_reward_weight = im_reward_weight
             self.training_same_as_inference = training_same_as_inference
+            self.reward_weight = reward_weight
 
         self.future_reward_model_frame_idx = future_reward_model_frame_idx if future_reward_model_frame_idx is not None else [future_pred_frame_num]
         self.random_select_reward_model_frame = random_select_reward_model_frame
@@ -635,7 +637,7 @@ class Drive_OccWorld(BEVFormer):
                 # 非wote方式，训推一致
                 if self.training_same_as_inference:
                     all_rewards = 0
-                    w = [0.1, 0.5, 0.5, 1.0, 1.0]
+                    w = self.reward_weight  # [0.1, 0.5, 0.5, 1.0, 1.0]
                     if self.use_sim_reward:
                         S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = sim_rewards_targets
                         S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1), S_COMFORT.squeeze(-1)
@@ -679,7 +681,7 @@ class Drive_OccWorld(BEVFormer):
                 max_reward_idx = all_rewards.argmax()
             if self.simulation_for_inference:
                 all_rewards = 0
-                w = [0.1, 0.5, 0.5, 1.0, 1.0]
+                w = self.reward_weight
                 if self.use_sim_reward:
                     S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = sim_traj_rewards
                     S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1), S_COMFORT.squeeze(-1)
@@ -691,7 +693,7 @@ class Drive_OccWorld(BEVFormer):
                     max_reward_idx = all_rewards.argmax()
             if self.all_reward_for_inference:
                 all_rewards = 0
-                w = [0.1, 0.5, 0.5, 1.0, 1.0]
+                w = self.reward_weight
                 if self.use_sim_reward:
                     S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = sim_traj_rewards
                     S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1), S_COMFORT.squeeze(-1)
@@ -713,7 +715,7 @@ class Drive_OccWorld(BEVFormer):
 
         return pose_pred, pose_loss, im_reward_loss, sim_reward_loss, plan_query, multi_traj, multi_pose_pred, im_reward_targets
 
-    def obtain_ref_bev_with_plan(self, img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj=None, is_multi_traj=False):
+    def obtain_ref_bev_with_plan(self, img, img_metas, prev_bev, ref_sample_traj, ref_sem_occupancy, ref_command, ref_real_traj=None, is_multi_traj=False, vel_steering=None):
         # Extract current BEV features.
         # C1. Forward.
         img_feats = self.extract_feat(img=img, img_metas=img_metas)
@@ -1188,7 +1190,7 @@ class Drive_OccWorld(BEVFormer):
                 gt_traj = sdc_planning[:, :, :2].to(torch.float32).unsqueeze(2)[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]   # bs, tims, 1, 2
                 pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]  # 1, times, 2/3
                 future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]  # [1, times, 40000, 256]
-                if self.if_detach_bev:
+                if self.if_detach_bev:  # 默认False
                     losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(gt_traj, pred_multi_traj_v2_, future_bev_feats_.detach().clone()) * self.plan_distill_weight['traj_reward_distillation']
                 else:
                     losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(gt_traj, pred_multi_traj_v2_, future_bev_feats_) * self.plan_distill_weight['traj_reward_distillation']
@@ -1431,7 +1433,8 @@ class Drive_OccWorld(BEVFormer):
                                                                                                     ref_sem_occupancy, 
                                                                                                     ref_command, 
                                                                                                     ref_real_traj,
-                                                                                                    is_multi_traj=True if 0 in self.future_reward_model_frame_idx else False)
+                                                                                                    is_multi_traj=True if 0 in self.future_reward_model_frame_idx else False,
+                                                                                                    vel_steering=vel_steering)
         else:
             ref_bev = self.obtain_ref_bev(img, img_metas, prev_bev)
             sem_occupancy, ref_pose_pred, ref_pose_loss = None, None, None
@@ -1457,7 +1460,7 @@ class Drive_OccWorld(BEVFormer):
                 occ_gts = segmentation[0][self.future_pred_head.history_queue_length+1-self.memory_queue_len:-1]
                 occ_gts = F.interpolate(occ_gts.unsqueeze(1), size=(self.bev_h, self.bev_w, self.future_pred_head.prev_render_neck.pred_height), mode='nearest').transpose(0,1)
             else:
-                occ_gts = None    # 20250912如果是收敛好的，那么就是None，所以在训练reward model时，这个也为None试试，同理下面的sem_occupancy也是
+                occ_gts = None
             cond_norm_dict = {'occ_gts': occ_gts}
             # D3. prepare action condition dict
             action_condition_dict = {'command':command, 'vel_steering': vel_steering}
@@ -1551,7 +1554,7 @@ class Drive_OccWorld(BEVFormer):
             if self.use_plan_feat_distillation:
                 # 如果是使用自回归的结果去蒸馏，则用这个
                 # pred_future_bev_feat: (6, 3, bs, HxW, C)->(bs, 6, HxW, C)
-                pred_future_bev_feat_last_ = pred_future_bev_feat_last.detach().clone() if self.if_detach_future_bev_feat else pred_future_bev_feat_last
+                pred_future_bev_feat_last_ = pred_future_bev_feat_last.detach().clone() if self.detach_future_bev_feat else pred_future_bev_feat_last
                 if self.plan_feat_distillation_method == "fusion_adapter":
                     pred_future_bev_feat_ = self.temporal_fusion_adapter(pred_future_bev_feat_last_)
                 elif self.plan_feat_distillation_method == "mean":
