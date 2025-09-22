@@ -350,38 +350,23 @@ class RewardConvNet(nn.Module):
 
         # 使用reward model评估模型a的轨迹
         im_traj_scores_a_list = []
-        sim_traj_scores_a_list = []
-        x_cat_a_list = []
-
         for i in range(times):
             reward_feats_i = reward_feats[:, i, ...].repeat(bs*num_traj, 1, 1, 1).squeeze(-1).squeeze(-1)
             x_cat_i = self.cat_encoder(torch.cat([reward_feats_i, model_a_trajectories_embed[:, i, ...].reshape(bs*num_traj, -1)], dim=1))
-            x_cat_a_list.append(x_cat_i)
-
-            # Imitation reward
             x_i = self.reward_head(x_cat_i)
             im_traj_scores_a_i = x_i.reshape(bs, num_traj)
             im_traj_scores_a_list.append(im_traj_scores_a_i)
-
-            # Simulation reward
-            if self.use_sim_reward:
-                sim_reward_scores_i = []
-                for j in range(self.sim_reward_nums):
-                    input_x_cat_i = x_cat_i.detach().clone() if self.if_detach_sim else x_cat_i
-                    x_sim_i = self.sim_reward_heads[j](input_x_cat_i)
-                    x_sim_i = x_sim_i.reshape(bs, num_traj)  # (bs,)
-                    sim_reward_scores_i.append(x_sim_i)
-                sim_traj_scores_a_i = torch.stack(sim_reward_scores_i, dim=0)  # [sim_reward_nums, bs, num_traj]
-                sim_traj_scores_a_list.append(sim_traj_scores_a_i)
-            
         im_traj_scores_a = torch.stack(im_traj_scores_a_list, dim=1)  # [bs, times, num_traj]
         # 选择最大的reward轨迹的索引
         best_traj_idx = torch.argmax(im_traj_scores_a, dim=2)  # [bs, times]
         best_traj_a = model_a_trajectories[:, torch.arange(times), best_traj_idx.squeeze(0)]  # [bs, times, 2]
 
+        losses = {}
+
         if return_distance_loss:
             # 计算模型B轨迹与最佳轨迹A的距离
             distance_loss = torch.norm(model_b_trajectory - best_traj_a, dim=1).mean()
+            losses.update(distance_loss=distance_loss)
         else:
             distance_loss = 0
         
@@ -401,11 +386,12 @@ class RewardConvNet(nn.Module):
         
         # Reward对齐损失
         reward_alignment_loss = torch.nn.functional.mse_loss(im_traj_scores_b, best_traj_a_reward)  # [bs, times]
-        
+
+        losses.update(reward_alignment_loss=reward_alignment_loss)
         # 总损失
-        total_loss = distance_loss + reward_alignment_loss
-        
-        return total_loss
+        # total_loss = distance_loss + reward_alignment_loss
+
+        return losses
 
     def reward_distillation_alignment_with_sim(self, model_a_trajectories, model_b_trajectory, fut_bev_feature, return_distance_loss=False, sim_reward_weight=1.0):
         """
@@ -537,16 +523,22 @@ class RewardConvNet(nn.Module):
         else:
             sim_reward_alignment_loss = 0
 
+        losses = {}
+
         # 计算距离损失（可选）
         if return_distance_loss:
             distance_loss = torch.norm(model_b_trajectory - best_traj_a, dim=2).mean()
+            losses.update(distance_loss=distance_loss)
         else:
             distance_loss = 0
         
         # 总损失
-        total_loss = distance_loss + im_reward_alignment_loss + sim_reward_weight * sim_reward_alignment_loss
+        # total_loss = distance_loss + im_reward_alignment_loss + sim_reward_weight * sim_reward_alignment_loss
+
+        losses.update(im_reward_alignment_loss=im_reward_alignment_loss)
+        losses.update(sim_reward_alignment_loss=sim_reward_alignment_loss * sim_reward_weight)
         
-        return total_loss
+        return losses
 
 class CrossAttentionTransformer(nn.Module):
     """2层transformer用于reward_feats和traj_feats的cross attention交互"""

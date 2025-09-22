@@ -1191,9 +1191,9 @@ class Drive_OccWorld(BEVFormer):
                 pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]  # 1, times, 2/3
                 future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]  # [1, times, 40000, 256]
                 if self.if_detach_bev:  # 默认False
-                    losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(gt_traj, pred_multi_traj_v2_, future_bev_feats_.detach().clone()) * self.plan_distill_weight['traj_reward_distillation']
+                    losses_distill_traj_reward = self.reward_model.reward_distillation_alignment_with_sim(gt_traj, pred_multi_traj_v2_, future_bev_feats_.detach().clone()) * self.plan_distill_weight['traj_reward_distillation']
                 else:
-                    losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(gt_traj, pred_multi_traj_v2_, future_bev_feats_) * self.plan_distill_weight['traj_reward_distillation']
+                    losses_distill_traj_reward = self.reward_model.reward_distillation_alignment_with_sim(gt_traj, pred_multi_traj_v2_, future_bev_feats_) * self.plan_distill_weight['traj_reward_distillation']
             else:
                 if pred_multi_traj_v1 is None or pred_multi_traj_v2 is None:
                     assert False, "pred_multi_traj_v1 or pred_multi_traj_v2 is None"
@@ -1206,17 +1206,22 @@ class Drive_OccWorld(BEVFormer):
                 # 根据self.future_reward_model_frame_idx来选择pred_multi_traj_v2和fused_future_bev_feat
                 pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]  # 1, times, 2/3
                 future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]  # [1, times, 40000, 256]
+                # losses_distill_traj_reward is a dict
                 if self.if_detach_bev:
-                    losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_.detach().clone()) * self.plan_distill_weight['traj_reward_distillation']
+                    losses_distill_traj_reward = self.reward_model.reward_distillation_alignment_with_sim(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_.detach().clone()) * self.plan_distill_weight['traj_reward_distillation']
                 else:
-                    losses_distill_traj_reward = self.reward_model.reward_distillation_alignment(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_) * self.plan_distill_weight['traj_reward_distillation']
+                    losses_distill_traj_reward = self.reward_model.reward_distillation_alignment_with_sim(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_) * self.plan_distill_weight['traj_reward_distillation']
             
             if self.training_epoch >= self.distill_epoch_range['traj_reward_distillation'][0] and self.training_epoch < self.distill_epoch_range['traj_reward_distillation'][1]:
-                losses_distill_traj_reward = losses_distill_traj_reward * self.plan_distill_weight['traj_reward_distillation']
+                # losses_distill_traj_reward = losses_distill_traj_reward * self.plan_distill_weight['traj_reward_distillation']
+                for key, value in losses_distill_traj_reward.items():
+                    losses_distill_traj_reward[key] = value * self.plan_distill_weight['traj_reward_distillation']
             else:
-                losses_distill_traj_reward = losses_distill_traj_reward * 0.0
+                # losses_distill_traj_reward = losses_distill_traj_reward * 0.0
+                for key, value in losses_distill_traj_reward.items():
+                    losses_distill_traj_reward[key] = value * 0.0
                 
-            losses.update(losses_distill_traj_reward=losses_distill_traj_reward)
+            losses.update(losses_distill_traj_reward)
 
 
         return losses
