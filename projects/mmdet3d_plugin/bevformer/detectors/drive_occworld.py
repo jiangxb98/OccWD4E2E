@@ -620,11 +620,11 @@ class Drive_OccWorld(BEVFormer):
             # 2. sim_loss, 根据世界模型的输出，计算sim_loss
             # 注意这里存在问题，sim_rewards可能都是1，那么选最大的就是默认第一个了
             if sim_rewards_targets is not None and sim_traj_rewards is not None and self.use_sim_reward:
-                if self.reward_model.sim_head_type == 'ALL': 
-                    sim_rewards_targets = sim_rewards_targets
+                if self.reward_model.sim_head_type == 'ALL' or self.reward_model.sim_head_type == 'WO_COMF': 
+                    sim_rewards_targets = sim_rewards_targets[:self.reward_model.sim_reward_nums, :]
                 else:
                     assert self.reward_model.sim_head_type in ['NC', 'DAC', 'TTC', 'EP', 'Comfortability'], "sim_head_type must be in ['NC', 'DAC', 'TTC', 'EP', 'Comfortability']"
-                    sim_rewards_targets = sim_rewards_targets[self.reward_model.sim_head_mapping[self.reward_model.sim_head_type], :]
+                    sim_rewards_targets = sim_rewards_targets[self.reward_model.sim_head_mapping[self.reward_model.sim_head_type], :].unsqueeze(0)
                 sim_reward_loss = compute_sim_reward_loss(sim_rewards_targets, sim_traj_rewards)
 
                 if self.training_epoch >= self.start_simulation_loss_epoch:
@@ -661,7 +661,17 @@ class Drive_OccWorld(BEVFormer):
                             )
                         if self.use_im_reward:
                             all_rewards = all_rewards + w[0] * torch.log(im_reward_targets)
-                        
+                    elif self.reward_model.sim_head_type == 'WO_COMF':
+                        if self.use_sim_reward:
+                            S_NC, S_DAC, S_EP, S_TTC = sim_rewards_targets
+                            S_NC, S_DAC, S_EP, S_TTC = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1)
+                            all_rewards = all_rewards + (
+                                w[1] * torch.log(S_NC) +
+                                w[2] * torch.log(S_DAC) +
+                                w[3] * torch.log(5 * S_TTC + 5 * S_EP)
+                            )
+                        if self.use_im_reward:
+                            all_rewards = all_rewards + w[0] * torch.log(im_reward_targets)
                     elif self.reward_model.sim_head_type in ['NC', 'DAC', 'TTC', 'EP', 'Comfortability']:
                         # 20251017, 这里只使用NC, DAC, TTC, EP, Comfortability中的一个头来计算reward, 用于ablation实验
                         # 权重都是0.5
@@ -717,6 +727,16 @@ class Drive_OccWorld(BEVFormer):
                             w[3] * torch.log(5 * S_TTC + 2 * S_COMFORT + 5 * S_EP)
                         )
                         max_reward_idx = all_rewards.argmax()
+                elif self.reward_model.sim_head_type == 'WO_COMF':
+                    if self.use_sim_reward:
+                        S_NC, S_DAC, S_EP, S_TTC = sim_traj_rewards
+                        S_NC, S_DAC, S_EP, S_TTC = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1)
+                        all_rewards = all_rewards + (
+                            w[1] * torch.log(S_NC) +
+                            w[2] * torch.log(S_DAC) +
+                            w[3] * torch.log(5 * S_TTC + 5 * S_EP)
+                        )
+                        max_reward_idx = all_rewards.argmax()
                 elif self.reward_model.sim_head_type in ['NC', 'DAC', 'TTC', 'EP', 'Comfortability']:
                     if self.use_sim_reward:
                         sim_rewards_targets = sim_rewards_targets[self.reward_model.sim_head_mapping[self.reward_model.sim_head_type], :]
@@ -739,6 +759,15 @@ class Drive_OccWorld(BEVFormer):
                         )
                     if self.use_im_reward:
                         all_rewards = all_rewards + w[0] * torch.log(im_traj_rewards)
+                elif self.reward_model.sim_head_type == 'WO_COMF':
+                    if self.use_sim_reward:
+                        S_NC, S_DAC, S_EP, S_TTC = sim_traj_rewards
+                        S_NC, S_DAC, S_EP, S_TTC = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1)
+                        all_rewards = all_rewards + (
+                            w[1] * torch.log(S_NC) +
+                            w[2] * torch.log(S_DAC) +
+                            w[3] * torch.log(5 * S_TTC + 5 * S_EP)
+                        )
                 elif self.reward_model.sim_head_type in ['NC', 'DAC', 'TTC', 'EP', 'Comfortability']:
                     if self.use_sim_reward:
                         sim_rewards_targets = sim_rewards_targets[self.reward_model.sim_head_mapping[self.reward_model.sim_head_type], :]
