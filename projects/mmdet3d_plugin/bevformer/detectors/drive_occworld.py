@@ -768,10 +768,11 @@ class Drive_OccWorld(BEVFormer):
                             w[2] * torch.log(S_DAC) +
                             w[3] * torch.log(5 * S_TTC + 5 * S_EP)
                         )
+                    if self.use_im_reward:
+                        all_rewards = all_rewards + w[0] * torch.log(im_traj_rewards)
                 elif self.reward_model.sim_head_type in ['NC', 'DAC', 'TTC', 'EP', 'Comfortability']:
                     if self.use_sim_reward:
-                        sim_rewards_targets = sim_rewards_targets[self.reward_model.sim_head_mapping[self.reward_model.sim_head_type], :]
-                        all_rewards = all_rewards + 0.5 * torch.log(sim_rewards_targets.squeeze(-1))
+                        all_rewards = all_rewards + 0.5 * torch.log(sim_traj_rewards.squeeze(-1))
                     if self.use_im_reward:
                         all_rewards = all_rewards + 0.1 * torch.log(im_traj_rewards)
                 else:
