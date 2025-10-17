@@ -332,7 +332,8 @@ class PlanHead_v1(BaseModule):
 
         return torch.mean(L)
 
-    def cal_sim_reward(self, trajs, gt_trajs, cost_volume, instance_occupancy, drivable_area, vel_steering):
+    def cal_sim_reward_old_v1(self, trajs, gt_trajs, cost_volume, instance_occupancy, drivable_area, vel_steering):
+        # old version, 用来备份于20251017
         '''
         这个是为了计算sim reward的
         trajs: torch.Tensor (B, N, 3)
@@ -389,7 +390,56 @@ class PlanHead_v1(BaseModule):
         else:
             raise ValueError(f'sim_reward_nums must be 1 or 3, but got {self.sim_reward_nums}')
         return cost
-    
+
+    def cal_sim_reward(self, trajs, gt_trajs, cost_volume, instance_occupancy, drivable_area, vel_steering):
+        '''
+        这个是为了计算sim reward的
+        trajs: torch.Tensor (B, N, 3)
+        gt_trajs: torch.Tensor (B, 3)
+        cost_volume: torch.Tensor (B, 200, 200)
+        instance_occupancy: torch.Tensor(B, 200, 200)
+        drivable_area: torch.Tensor(B, 200, 200)
+        '''
+        if gt_trajs.ndim == 2:
+            gt_trajs = gt_trajs[:, None]
+
+        cost = self.cost_function.forward_sim(trajs[:,:,:2], instance_occupancy, drivable_area, self.sim_reward_nums, vel_steering)
+
+        # 'no_at_fault_collisions', 'drivable_area_compliance', 'ego_progress', 'time_to_collision_within_bound', 'comfort'
+        # weights: [0.1, 0.5, 0.5, 1.0, 1.0]
+        # S_NC, S_DAC, S_EP, S_TTC, S_COMFORT
+        # 5xEP, 5xTTC, 2xCOMFORT
+        for i in range(self.sim_reward_nums):
+            # cost=0表示没有碰撞
+            if i == 2:
+                # 约束在安全范围内
+                cost[i] = cost[i] * cost[0] * cost[1]
+                max_progress = cost[i].max()
+                if max_progress > 5.0:
+                    cost[i] = cost[i] / max_progress
+                    neg_mask = cost[i] < 0
+                    cost[i][neg_mask] = 0
+                else:
+                    # 负数距离的话，就设置为0，其他小于5m的都是为1的
+                    neg_mask = cost[i] < 0
+                    cost[i] = torch.ones_like(cost[i])
+                    cost[i][neg_mask] = 0
+            elif i == 4:
+                # for comfort
+                # 0 is not comfort, 1 is comfort
+                # cost[i] = cost[i]
+                continue
+            else:
+                pos_mask = cost[i] <= 0
+                neg_mask = cost[i] > 0
+                
+                cost[i][pos_mask] = 1
+                cost[i][neg_mask] = 0
+
+        cost = torch.cat(cost, dim=0)  # shape: B*self.sim_reward_nums, sample_traj_nums  eg. (5, 20)
+
+        return cost
+
     def select(self, trajs, cost_volume, instance_occupancy, drivable_area, k=1):
         '''
         trajs: torch.Tensor (B, N, 3)

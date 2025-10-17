@@ -98,13 +98,15 @@ class Cost_Function(nn.Module):
         comfortcost = self.comfortcost_navsim(trajs, vel_steering[:,:2], vel_steering[:,2], vel_steering[:,3])                                   # penalize high accelerations (lateral, longitudinal, jerk)
 
 
-        if sim_reward_nums == 1:
-            cost_fo = safetycost + rulecost
-        elif sim_reward_nums == 5:
-            cost_fo = [safetycost, rulecost, progresscost, headwaycost, comfortcost]
-        else:
-            raise ValueError(f'sim_reward_nums must be 1 or 3, but got {sim_reward_nums}')
+        # if sim_reward_nums == 1:
+            
+        #     cost_fo = safetycost + rulecost
+        # elif sim_reward_nums == 5:
+        #     cost_fo = [safetycost, rulecost, progresscost, headwaycost, comfortcost]
+        # else:
+        #     raise ValueError(f'sim_reward_nums must be 1 or 3, but got {sim_reward_nums}')
         
+        cost_fo = [safetycost, rulecost, progresscost, headwaycost, comfortcost]
 
         return cost_fo
 

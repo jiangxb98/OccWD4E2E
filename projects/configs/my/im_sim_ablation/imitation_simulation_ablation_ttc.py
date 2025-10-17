@@ -92,7 +92,8 @@ output_multi_traj = True  # 输出多条轨迹
 sample_traj_nums = 20     # 采样轨迹数
 use_sim_reward = True     # 使用simulation reward
 use_im_reward = True      # 使用imitation reward
-sim_reward_nums = 5       # simulation reward head nums
+sim_reward_nums = 1       # simulation reward head nums   # NC, DAC, TTC, EP, Comfortability
+sim_head_type = 'TTC'      # NC, DAC, TTC, EP, Comfortability, ALL
 plan_query_nums = 1       # plan query nums
 freeze_model_name = ['img_backbone', 'img_neck', 'future_pred_head', 'pts_bbox_head']
 future_reward_model_frame_idx = [1, 2, 3, 4, 5]
@@ -137,6 +138,7 @@ model = dict(
         use_sim_reward=use_sim_reward,
         use_im_reward=use_im_reward,
         if_detach_sim=if_detach_sim,
+        sim_head_type=sim_head_type,
     ),
     # for inference
     imitation_for_inference=imitation_for_inference,

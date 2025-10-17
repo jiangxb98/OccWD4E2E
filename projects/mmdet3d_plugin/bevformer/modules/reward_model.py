@@ -87,6 +87,14 @@ class RewardConvNet(nn.Module):
                  extra_bev_adapter: bool = False,
                  if_detach_sim: bool = False,
                  deep_sim_heads: bool = False,  # 是否使用更深层的网络计算sim reward
+                 sim_head_type: str = 'ALL',  # NC, DAC, TTC, EP, Comfortability, ALL
+                 sim_head_mapping: dict = {
+                    'NC': 0,
+                    'DAC': 1,
+                    'TTC': 2,
+                    'EP': 3,
+                    'Comfortability': 4,
+                 },
                  ):
         super(RewardConvNet, self).__init__()
         
@@ -99,6 +107,12 @@ class RewardConvNet(nn.Module):
         self.extra_bev_adapter = extra_bev_adapter
         self.if_detach_sim = if_detach_sim
         self.deep_sim_heads = deep_sim_heads
+        self.sim_head_type = sim_head_type
+        assert self.sim_head_type in ['NC', 'DAC', 'TTC', 'EP', 'Comfortability', 'ALL'], "sim_head_type must be in ['NC', 'DAC', 'TTC', 'EP', 'Comfortability', 'ALL']"
+        if self.sim_head_type == 'ALL':
+            assert self.sim_reward_nums == 5, "sim_reward_nums must be 5 when sim_head_type is ALL"
+        self.sim_head_mapping = sim_head_mapping
+        
         if self.extra_bev_adapter:
             bevformer_bev_conf = {
                 'xbound': [-51.2, 51.2, 0.512],
