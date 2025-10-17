@@ -450,7 +450,7 @@ class RewardConvNet(nn.Module):
                     x_sim_i = self.sim_reward_heads[j](input_x_cat_i)
                     x_sim_i = x_sim_i.reshape(bs, num_traj)  # (bs,)
                     sim_reward_scores_i.append(x_sim_i)
-                sim_traj_scores_a_i = torch.stack(sim_reward_scores_i, dim=0)  # [sim_reward_nums, bs, num_traj]
+                sim_traj_scores_a_i = torch.stack(sim_reward_scores_i, dim=1)  # [bs, sim_reward_nums, num_traj]
                 sim_traj_scores_a_list.append(sim_traj_scores_a_i)
         
         x_cat_b_list = []
@@ -505,7 +505,7 @@ class RewardConvNet(nn.Module):
                     x_sim_i = self.sim_reward_heads[j](input_x_cat_i)
                     x_sim_i = x_sim_i.reshape(bs, 1)
                     sim_reward_scores_b_i.append(x_sim_i)
-                sim_traj_scores_b_i = torch.stack(sim_reward_scores_b_i, dim=0)  # [sim_reward_nums, bs, 1]
+                sim_traj_scores_b_i = torch.stack(sim_reward_scores_b_i, dim=1)  # [sim_reward_nums, bs, 1]
                 sim_traj_scores_b_list.append(sim_traj_scores_b_i)
             
             sim_traj_scores_b = torch.stack(sim_traj_scores_b_list, dim=1)  # [bs, times, sim_reward_nums]
@@ -590,7 +590,7 @@ class RewardConvNet(nn.Module):
                     x_sim_i = self.sim_reward_heads[j](input_x_cat_i)
                     x_sim_i = x_sim_i.reshape(bs, num_traj)
                     sim_reward_scores_i.append(x_sim_i)
-                sim_traj_scores_a_i = torch.stack(sim_reward_scores_i, dim=0)  # [sim_reward_nums, bs, num_traj]
+                sim_traj_scores_a_i = torch.stack(sim_reward_scores_i, dim=1)  # [bs, sim_reward_nums, num_traj]
                 sim_traj_scores_a_list.append(sim_traj_scores_a_i)
             else:
                 raise ValueError("use_sim_reward must be True for sim-only distillation")
@@ -614,7 +614,7 @@ class RewardConvNet(nn.Module):
                 x_sim_i = self.sim_reward_heads[j](input_x_cat_i)
                 x_sim_i = x_sim_i.reshape(bs, 1)
                 sim_reward_scores_b_i.append(x_sim_i)
-            sim_traj_scores_b_i = torch.stack(sim_reward_scores_b_i, dim=0)  # [sim_reward_nums, bs, 1]
+            sim_traj_scores_b_i = torch.stack(sim_reward_scores_b_i, dim=1)  # [sim_reward_nums, bs, 1]
             sim_traj_scores_b_list.append(sim_traj_scores_b_i)
         
         sim_traj_scores_b = torch.stack(sim_traj_scores_b_list, dim=1)  # [bs, times, sim_reward_nums]
