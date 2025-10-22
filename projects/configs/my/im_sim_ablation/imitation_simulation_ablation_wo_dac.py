@@ -85,36 +85,25 @@ bev_h_ = 200
 bev_w_ = 200
 pred_height = 16
 
-# 将自回归的冻结住
-# 使用gt轨迹的reward进行蒸馏的时候，注意经过实验测试，reward_model如果解冻的话效果会更好
-freeze_model_name = ['img_backbone', 'img_neck', 'pts_bbox_head', 'plan_head', 'future_pred_head']
-unfreeze_model_name = None
-use_simple_plan = True
-use_autoregressive_plan = True
-use_plan_query_distillation = True
-use_plan_feat_distillation = False
-use_traj_reward_distillation = True
-use_gt_traj_for_distillation = True
-use_sim_reward_for_distillation = True  # 使用simulation reward进行蒸馏(也包含了imitation reward)
-use_im_reward_for_distillation = True
+# for reward model
 
-loss_bev=dict(type='MSELoss', loss_weight=1.0)
-
-find_unused_parameters=False  #  pts_bbox_head_v2.code_weights.requires_grad alwarys is False
-
-use_reward_model = True   # 使用奖励模型
+use_reward_model = True   # 使用奖励模型，True use the imitation reward
 output_multi_traj = True  # 输出多条轨迹
 sample_traj_nums = 20     # 采样轨迹数
 use_sim_reward = True     # 使用simulation reward
 use_im_reward = True      # 使用imitation reward
-sim_reward_nums = 5       # simulation reward head nums
+sim_reward_nums = 4       # simulation reward head nums   # NC, DAC, TTC, EP, Comfortability
+sim_head_type = 'WO_DAC'      # NC, DAC, TTC, EP, Comfortability, ALL, WO_COMF, WO_NC, WO_DAC, WO_TTC, WO_EP
 plan_query_nums = 1       # plan query nums
-future_reward_model_frame_idx = [1, 2, 3, 4, 5]
+freeze_model_name = ['img_backbone', 'img_neck', 'future_pred_head', 'pts_bbox_head']
+future_reward_model_frame_idx = [0, 1, 2, 3, 4, 5]
 plan_traj_for_sim_reward_epoch = 999999   # 这个是启动simulation reward的epoch，小于这个数就是用初始化的多模轨迹来计算sim_reward
 random_select = True
 use_gt_occ_for_sim_reward = True
 if_detach_sim = True
 training_same_as_inference = True
+start_pred_occ_epoch = 6  # 从哪个epoch开始使用预测的occupancy来计算sim_reward, 20251017最优epoch是6
+
 
 # for inference
 imitation_for_inference = False
@@ -138,6 +127,7 @@ model = dict(
     use_reward_model=use_reward_model,
     future_reward_model_frame_idx=future_reward_model_frame_idx,
     training_same_as_inference=training_same_as_inference,
+    start_pred_occ_epoch=start_pred_occ_epoch,
     reward_model=dict(
         type='RewardConvNet',
         bev_h=bev_h_,
@@ -148,6 +138,7 @@ model = dict(
         use_sim_reward=use_sim_reward,
         use_im_reward=use_im_reward,
         if_detach_sim=if_detach_sim,
+        sim_head_type=sim_head_type,
     ),
     # for inference
     imitation_for_inference=imitation_for_inference,
@@ -157,17 +148,6 @@ model = dict(
     point_cloud_range=point_cloud_range,
     bev_h=bev_h_,
     bev_w=bev_w_,
-
-    # for reward distillation
-    use_simple_plan=use_simple_plan,
-    use_autoregressive_plan=use_autoregressive_plan,
-    use_plan_query_distillation=use_plan_query_distillation,
-    use_plan_feat_distillation=use_plan_feat_distillation,
-    use_traj_reward_distillation=use_traj_reward_distillation,
-    use_gt_traj_for_distillation=use_gt_traj_for_distillation,
-    use_sim_reward_for_distillation=use_sim_reward_for_distillation,
-    use_im_reward_for_distillation=use_im_reward_for_distillation,
-    loss_bev=loss_bev,
 
     # Predict frame num.
     future_pred_frame_num=future_pred_frame_num_train,
@@ -192,248 +172,6 @@ model = dict(
         add_extra_convs='on_output',
         num_outs=4,
         relu_before_extra_convs=True),
-    img_backbone_v2=dict(
-        type='ResNet',
-        depth=101,
-        num_stages=4,
-        out_indices=(1, 2, 3,),
-        frozen_stages=1,
-        norm_cfg=dict(type='BN2d', requires_grad=False),
-        norm_eval=True,
-        style='caffe',
-        dcn=dict(type='DCNv2', deform_groups=1, fallback_on_stride=False), # original DCNv2 will print log when perform load_state_dict
-        stage_with_dcn=(False, False, True, True)),
-    img_neck_v2=dict(
-        type='FPN',
-        in_channels=[512, 1024, 2048],
-        out_channels=_dim_,
-        start_level=0,
-        add_extra_convs='on_output',
-        num_outs=4,
-        relu_before_extra_convs=True),
-    future_pred_head_v2=dict(
-        type='WorldHeadV1',
-        num_classes=num_cls,
-        history_queue_length=queue_length,
-        memory_queue_len=memory_queue_len,
-        soft_weight=False,
-        turn_on_flow=False, # Occ Head
-        obj_motion_norm=False,
-        with_adapter=False,    # adapter for the fine-tune
-        adapter_cfg={'reduction': 8, 'n_blocks': 2},
-        pred_history_frame_num=world_head_pred_history_frame_num,
-        pred_future_frame_num=world_head_pred_future_frame_num,
-        per_frame_loss_weight=world_head_per_frame_loss_weight,
-
-        num_pred_fcs=1,  # head for point cloud prediction.
-        num_pred_height=pred_height,  # Predict BEV instead of 3D space occupancy.
-
-        use_can_bus=False,    # use future gt traj
-        use_plan_traj=True, # use future pred traj      4D-Occ-Pred: must use_plan_traj=True
-        use_command=True,
-        use_vel_steering=False,
-        use_vel=False,
-        use_steering=False,
-        use_fourier=False,
-        condition_ca_add='add',
-        can_bus_norm=True,
-        can_bus_dims=(0, 1, 2, 17),
-        bev_h=bev_h_,
-        bev_w=bev_w_,
-        pc_range=point_cloud_range,
-        loss_weight=frame_loss_weight,
-        loss_weight_cfg=dict(               # un-commented: multi-loss      commented: only CE-loss
-            loss_voxel_ce_weight=1.0,
-            loss_voxel_sem_scal_weight=1.0,
-            loss_voxel_geo_scal_weight=1.0,
-            loss_voxel_lovasz_weight=1.0,
-        ),
-        positional_encoding=dict(
-            type='LearnedPositionalEncoding',
-            num_feats=_pos_dim_,
-            row_num_embed=bev_h_,
-            col_num_embed=bev_w_,
-        ),
-        prev_render_neck=dict(
-            type='ConditionalNorm',
-            occ_flow='occ',
-            embed_dims=_dim_, 
-            sem_norm=True,
-            sem_gt_train=False,
-            ego_motion_ln=True,
-            obj_motion_ln=False,
-            pred_height=16, 
-            num_cls=num_cls,
-            num_pred_fcs=0,
-        ),
-        transformer=dict(
-            type='PredictionTransformer',
-            embed_dims=_dim_,
-            decoder=dict(
-                type='WorldDecoder',
-                num_layers=future_decoder_layer_num,
-                return_intermediate=True,
-                transformerlayers=dict(
-                    type='PredictionTransformerLayer',
-                    attn_cfgs=[
-                        # layer-1: deformable self-attention.
-                        dict(
-                            type='PredictionMSDeformableAttention',
-                            embed_dims=_dim_,
-                            num_levels=memory_queue_len,
-                        ),
-                        # layer-2: deformable cross-attention,
-                        dict(
-                            type='PredictionMSDeformableAttention',
-                            embed_dims=_dim_,
-                            num_levels=memory_queue_len),
-                        # layer-3: cross-attention with action condition,
-                        dict(
-                            type='GroupMultiheadAttention',
-                            embed_dims=_dim_,
-                            num_heads=8,
-                            dropout=0.1,
-                        ),
-                    ],
-                    feedforward_channels=_ffn_dim_,
-                    ffn_dropout=0.1,
-                    operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
-                                     'cross_attn_action', 'norm', 'ffn', 'norm'))
-            )),
-    ),
-    pts_bbox_head_v2=dict(
-        type='WorldBEVFormerHead',
-        bev_h=bev_h_,
-        bev_w=bev_w_,
-        num_query=900,
-        num_classes=num_cls,
-        in_channels=_dim_,
-        sync_cls_avg_factor=True,
-        with_box_refine=True,
-        as_two_stage=False,
-        transformer=dict(
-            type='PerceptionTransformer',
-            rotate_prev_bev=True,
-            use_shift=True,
-            use_can_bus=True,
-            embed_dims=_dim_,
-            encoder=dict(
-                type='CustomBEVFormerEncoder',
-                num_layers=6,   # 6
-                pc_range=point_cloud_range,
-                num_points_in_pillar=4,
-                return_intermediate=False,
-                transformerlayers=dict(
-                    type='BEVFormerLayerV2',
-                    attn_cfgs=[
-                        dict(
-                            type='TemporalSelfAttention',
-                            embed_dims=_dim_,
-                            num_levels=1),
-                        dict(
-                            type='SpatialCrossAttention',
-                            pc_range=point_cloud_range,
-                            deformable_attention=dict(
-                                type='MSDeformableAttention3D',
-                                embed_dims=_dim_,
-                                num_points=8,
-                                num_levels=_num_levels_),
-                            embed_dims=_dim_,
-                        )
-                    ],
-                    feedforward_channels=_ffn_dim_,
-                    ffn_dropout=0.1,
-                    operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
-                                     'ffn', 'norm'))),
-            # !!!!!!! DECODER NOT USED !!!!!!!
-            decoder=dict(
-                type='DetectionTransformerDecoder',
-                num_layers=6,
-                return_intermediate=True,
-                transformerlayers=dict(
-                    type='DetrTransformerDecoderLayer',
-                    attn_cfgs=[
-                        dict(
-                            type='MultiheadAttention',
-                            embed_dims=_dim_,
-                            num_heads=8,
-                            dropout=0.1),
-                         dict(
-                            type='CustomMSDeformableAttention',
-                            embed_dims=_dim_,
-                            num_levels=1),
-                    ],
-
-                    feedforward_channels=_ffn_dim_,
-                    ffn_dropout=0.1,
-                    operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
-                                     'ffn', 'norm')))),
-        bbox_coder=dict(
-            type='NMSFreeCoder',
-            post_center_range=[-61.2, -61.2, -10.0, 61.2, 61.2, 10.0],
-            pc_range=point_cloud_range,
-            max_num=300,
-            voxel_size=voxel_size,
-            num_classes=num_cls),
-        positional_encoding=dict(
-            type='LearnedPositionalEncoding',
-            num_feats=_pos_dim_,
-            row_num_embed=bev_h_,
-            col_num_embed=bev_w_,
-            ),
-        loss_cls=dict(
-            type='FocalLoss',
-            use_sigmoid=True,
-            gamma=2.0,
-            alpha=0.25,
-            loss_weight=2.0),
-        loss_bbox=dict(type='L1Loss', loss_weight=0.25),
-        loss_iou=dict(type='GIoULoss', loss_weight=0.0)),
-    plan_head_v2=dict(
-        type='PlanHead_v2',
-        with_adapter=True,
-        plan_grid_conf=plan_grid_conf,
-        bev_h=bev_h_,
-        bev_w=bev_w_,
-        transformer=dict(
-            type='PlanTransformer',
-            embed_dims=_dim_,
-            decoder=dict(
-                type='PlanDecoder',
-                num_layers=1,
-                return_intermediate=False,
-                transformerlayers=dict(
-                    type='PlanTransformerLayer',
-                    attn_cfgs=[
-                        # layer-1: temporal self-attention.
-                        dict(
-                            type='GroupMultiheadAttention',
-                            embed_dims=_dim_,
-                            num_heads=8,
-                            dropout=0.1,),
-                        # layer-2: spatial cross-attention,
-                        dict(
-                            type='GroupMultiheadAttention',
-                            embed_dims=_dim_,
-                            num_heads=8,
-                            dropout=0.1,),
-                    ],
-                    feedforward_channels=_ffn_dim_,
-                    ffn_dropout=0.1,
-                    operation_order=('self_attn', 'norm', 'cross_attn', 'norm', 'ffn', 'norm'))
-            )),
-        positional_encoding=dict(
-            type='LearnedPositionalEncoding',
-            num_feats=_pos_dim_,
-            row_num_embed=bev_h_,
-            col_num_embed=bev_w_,
-        ),
-        loss_planning=dict(type='PlanningLoss'),
-        loss_collision=[dict(type='CollisionLoss', delta=0.0, weight=2.5),
-                        dict(type='CollisionLoss', delta=0.5, weight=1.0),
-                        dict(type='CollisionLoss', delta=1.0, weight=0.25)],
-    ),    
-    
     future_pred_head=dict(
         type='WorldHeadV1',
         num_classes=num_cls,
@@ -663,7 +401,6 @@ model = dict(
                         dict(type='CollisionLoss', delta=0.5, weight=1.0),
                         dict(type='CollisionLoss', delta=1.0, weight=0.25)],
     ),    
-    
     # model training and testing settings
     train_cfg=dict(pts=dict(
         grid_size=[512, 512, 1],
