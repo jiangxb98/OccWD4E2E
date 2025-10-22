@@ -112,7 +112,8 @@ class Drive_OccWorld(BEVFormer):
                  detach_future_bev_feat=False,  # 是否使用detach的bev_feat进行bev_feat的蒸馏
                  plan_distill_weight=dict(plan_query_distillation=1.0, plan_feat_distillation=1.0, traj_reward_distillation=1.0),
                  if_detach_teacher_traj=False,  # 是否detach teacher traj进行轨迹reward的蒸馏
-                 
+                 start_teacher_traj_for_distillation_epoch=99999,
+
                  use_traj_anchor=False, # 是否使用候选轨迹用于计算reward，不使用候选轨迹，经过试验发现，效果很差
 
                  record_traj_reward_scores=False,  # 是否记录每个轨迹的reward得分
@@ -169,7 +170,8 @@ class Drive_OccWorld(BEVFormer):
         self.use_sim_reward_for_distillation = use_sim_reward_for_distillation
         self.use_im_reward_for_distillation = use_im_reward_for_distillation
         self.if_detach_teacher_traj = if_detach_teacher_traj
-        
+        self.start_teacher_traj_for_distillation_epoch = start_teacher_traj_for_distillation_epoch
+
         # for inference
         self.imitation_for_inference = imitation_for_inference
         self.simulation_for_inference = simulation_for_inference
@@ -1302,6 +1304,7 @@ class Drive_OccWorld(BEVFormer):
             losses.update(losses_distill_plan_query=losses_distill_plan_query)
 
         if self.use_traj_reward_distillation:
+            # 选择对应的蒸馏函数
             if self.use_im_reward_for_distillation and not self.use_sim_reward_for_distillation:
                 reward_distillation_alignment_func = self.reward_model.reward_distillation_alignment_with_im
             elif self.use_sim_reward_for_distillation and not self.use_im_reward_for_distillation:
@@ -1310,7 +1313,9 @@ class Drive_OccWorld(BEVFormer):
                 reward_distillation_alignment_func = self.reward_model.reward_distillation_alignment_with_im_sim
             else:
                 assert False, "not implemented"
-            if self.use_gt_traj_for_distillation:
+
+            # 如果是使用gt轨迹蒸馏，且当前epoch小于start_teacher_traj_for_distillation_epoch，则使用gt轨迹进行蒸馏
+            if self.use_gt_traj_for_distillation and self.training_epoch < self.start_teacher_traj_for_distillation_epoch:
                 gt_traj = sdc_planning[:, :, :2].to(torch.float32).unsqueeze(2)[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]   # bs, tims, 1, 2
                 pred_multi_traj_v2_ = pred_multi_traj_v2[:, torch.tensor(self.future_reward_model_frame_idx).to(pred_multi_traj_v2.device)]  # 1, times, 2/3
                 future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]  # [1, times, 40000, 256]
@@ -1319,6 +1324,7 @@ class Drive_OccWorld(BEVFormer):
                     losses_distill_traj_reward = reward_distillation_alignment_func(gt_traj, pred_multi_traj_v2_, future_bev_feats_.detach().clone())
                 else:
                     losses_distill_traj_reward = reward_distillation_alignment_func(gt_traj, pred_multi_traj_v2_, future_bev_feats_)
+            # 使用teacher预测的轨迹进行蒸馏
             else:
                 if pred_multi_traj_v1 is None or pred_multi_traj_v2 is None:
                     assert False, "pred_multi_traj_v1 or pred_multi_traj_v2 is None"
@@ -1333,9 +1339,9 @@ class Drive_OccWorld(BEVFormer):
                 future_bev_feats_ = future_bev_feats[:, torch.tensor(self.future_reward_model_frame_idx).to(future_bev_feats.device)]  # [1, times, 40000, 256]
                 # losses_distill_traj_reward is a dict
                 # 202509022 疑问：这里的pred_multi_traj_v1是不是detach后更好，如果gt的效果更好的话？
-                if self.if_detach_teacher_traj:
+                if self.if_detach_teacher_traj:  # default is False
                     pred_multi_traj_v1 = pred_multi_traj_v1.detach().clone()
-                if self.if_detach_bev:
+                if self.if_detach_bev:  # default is False
                     losses_distill_traj_reward = reward_distillation_alignment_func(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_.detach().clone())
                 else:
                     losses_distill_traj_reward = reward_distillation_alignment_func(pred_multi_traj_v1, pred_multi_traj_v2_, future_bev_feats_)

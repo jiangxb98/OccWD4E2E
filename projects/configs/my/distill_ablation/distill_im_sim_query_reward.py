@@ -85,6 +85,13 @@ bev_h_ = 200
 bev_w_ = 200
 pred_height = 16
 
+
+############################################################################################
+# plan query & imitation+simulation reward蒸馏，使用gt occ(for reward model)，gt轨迹(for distillation)  #
+############################################################################################
+
+
+# plan head config
 # 将自回归的冻结住
 # 使用gt轨迹的reward进行蒸馏的时候，注意经过实验测试，reward_model如果解冻的话效果会更好
 freeze_model_name = ['img_backbone', 'img_neck', 'pts_bbox_head', 'plan_head', 'future_pred_head']
@@ -92,25 +99,42 @@ unfreeze_model_name = None
 use_simple_plan = True
 use_autoregressive_plan = True
 use_plan_query_distillation = True
-use_plan_feat_distillation = False
+use_plan_feat_distillation = False  # always False
 use_traj_reward_distillation = True
+
+
 use_gt_traj_for_distillation = True
+start_teacher_traj_for_distillation_epoch = 3  # 从哪个epoch开始使用teacher轨迹进行蒸馏
+
+use_im_reward_for_distillation = True
+use_sim_reward_for_distillation = True
+
 
 loss_bev=dict(type='MSELoss', loss_weight=1.0)
 
 find_unused_parameters=False  #  pts_bbox_head_v2.code_weights.requires_grad alwarys is False
 
+
+# reward model config
 use_reward_model = True   # 使用奖励模型
 output_multi_traj = True  # 输出多条轨迹
 sample_traj_nums = 20     # 采样轨迹数
-use_sim_reward = False    # 使用simulation reward
+use_sim_reward = True    # 使用simulation reward
 use_im_reward = True      # 使用imitation reward
-sim_reward_nums = 1       # simulation reward head nums
+sim_reward_nums = 5       # simulation reward head nums
 plan_query_nums = 1       # plan query nums
-future_reward_model_frame_idx = [1, 2, 3, 4, 5]
+future_reward_model_frame_idx = [0, 1, 2, 3, 4, 5]
 plan_traj_for_sim_reward_epoch = 999999   # 这个是启动simulation reward的epoch
 random_select = True
 
+start_pred_occ_epoch = 6  # 从哪个epoch开始使用预测的occupancy来计算sim_reward, 20251017最优epoch是6if_detach_sim = True
+if_detach_sim = True
+training_same_as_inference = True
+
+# for inference
+imitation_for_inference = False
+simulation_for_inference = False
+all_reward_for_inference = True
 model = dict(
     type='Drive_OccWorld',
     turn_on_flow=turn_on_flow,
@@ -127,6 +151,8 @@ model = dict(
     # Reward model config
     use_reward_model=use_reward_model,
     future_reward_model_frame_idx=future_reward_model_frame_idx,
+    start_pred_occ_epoch=start_pred_occ_epoch,
+    training_same_as_inference=training_same_as_inference,
     reward_model=dict(
         type='RewardConvNet',
         bev_h=bev_h_,
@@ -136,18 +162,27 @@ model = dict(
         sim_reward_nums=sim_reward_nums,
         use_sim_reward=use_sim_reward,
         use_im_reward=use_im_reward,
+        if_detach_sim=if_detach_sim,
     ),
+    # for inference
+    imitation_for_inference=imitation_for_inference,
+    simulation_for_inference=simulation_for_inference,
+    all_reward_for_inference=all_reward_for_inference,
     # BEV configuration.
     point_cloud_range=point_cloud_range,
     bev_h=bev_h_,
     bev_w=bev_w_,
 
+    # for reward distillation
     use_simple_plan=use_simple_plan,
     use_autoregressive_plan=use_autoregressive_plan,
     use_plan_query_distillation=use_plan_query_distillation,
     use_plan_feat_distillation=use_plan_feat_distillation,
     use_traj_reward_distillation=use_traj_reward_distillation,
     use_gt_traj_for_distillation=use_gt_traj_for_distillation,
+    start_teacher_traj_for_distillation_epoch=start_teacher_traj_for_distillation_epoch,
+    use_im_reward_for_distillation=use_im_reward_for_distillation,
+    use_sim_reward_for_distillation=use_sim_reward_for_distillation,
     loss_bev=loss_bev,
 
     # Predict frame num.
@@ -602,7 +637,7 @@ model = dict(
         random_select=random_select,
         use_sim_reward=use_sim_reward,
         use_im_reward=use_im_reward,
-        use_gt_occ_for_sim_reward=use_gt_occ_for_sim_reward,
+        sim_reward_nums=sim_reward_nums,
         plan_query_nums=plan_query_nums,
         plan_traj_for_sim_reward_epoch=plan_traj_for_sim_reward_epoch,
 
@@ -771,7 +806,7 @@ lr_config = dict(
 
 evaluation = dict(interval=1, pipeline=test_pipeline)
 
-runner = dict(type='EpochBasedRunner', max_epochs=24)
+runner = dict(type='EpochBasedRunner', max_epochs=6)
 load_from = 'pretrained/r101_dcn_fcos3d_pretrain.pth'
 log_config = dict(
     interval=50,
