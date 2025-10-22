@@ -101,7 +101,7 @@ random_select = True
 use_gt_occ_for_sim_reward = True   # 废弃，使用下面的start_pred_occ_epoch来控制
 if_detach_sim = True
 training_same_as_inference = True
-start_pred_occ_epoch = 6  # 从哪个epoch开始使用预测的occupancy来计算sim_reward, 在Drive_OccWorld中使用
+start_pred_occ_epoch = 6  # 从哪个epoch开始使用预测的occupancy来计算sim_reward, 在Drive_OccWorld中使用, best
 
 # for inference
 imitation_for_inference = False

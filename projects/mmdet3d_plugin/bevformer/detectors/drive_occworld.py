@@ -620,12 +620,18 @@ class Drive_OccWorld(BEVFormer):
             # 2. sim_loss, 根据世界模型的输出，计算sim_loss
             # 注意这里存在问题，sim_rewards可能都是1，那么选最大的就是默认第一个了
             if sim_rewards_targets is not None and sim_traj_rewards is not None and self.use_sim_reward:
-                if self.reward_model.sim_head_type == 'ALL': 
+                if self.reward_model.sim_head_type in ['ALL', 'WO_NC', 'WO_DAC', 'WO_TTC', 'WO_EP', 'WO_COMF']: 
                     sim_rewards_targets = sim_rewards_targets
                 else:
                     assert self.reward_model.sim_head_type in ['NC', 'DAC', 'TTC', 'EP', 'Comfortability'], "sim_head_type must be in ['NC', 'DAC', 'TTC', 'EP', 'Comfortability']"
                     sim_rewards_targets = sim_rewards_targets[self.reward_model.sim_head_mapping[self.reward_model.sim_head_type], :].unsqueeze(0)
-                sim_reward_loss = compute_sim_reward_loss(sim_rewards_targets, sim_traj_rewards)
+                if self.reward_model.sim_head_type in ['WO_NC', 'WO_DAC', 'WO_TTC', 'WO_EP', 'WO_COMF']:
+                    mapping = {'WO_NC':0, 'WO_DAC':1, 'WO_TTC':2, 'WO_EP':3, 'WO_COMF':4}
+                    # 根据索引去掉对应的targets
+                    input_sim_rewards_targets = torch.stack([sim_rewards_targets[i] for i in range(len(sim_rewards_targets)) if i != mapping[self.reward_model.sim_head_type]])
+                    sim_reward_loss = compute_sim_reward_loss(input_sim_rewards_targets, sim_traj_rewards)
+                else:
+                    sim_reward_loss = compute_sim_reward_loss(sim_rewards_targets, sim_traj_rewards)
 
                 if self.training_epoch >= self.start_simulation_loss_epoch:
                     sim_reward_loss = sim_reward_loss * 0.  # 设置为0，不计算模拟损失
