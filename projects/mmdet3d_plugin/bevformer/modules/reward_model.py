@@ -108,9 +108,10 @@ class RewardConvNet(nn.Module):
         self.if_detach_sim = if_detach_sim
         self.deep_sim_heads = deep_sim_heads
         self.sim_head_type = sim_head_type
-        assert self.sim_head_type in ['NC', 'DAC', 'TTC', 'EP', 'Comfortability', 'ALL', 'WO_COMF', 'WO_NC', 'WO_DAC', 'WO_TTC', 'WO_EP', 'WO_COMF'], "sim_head_type must be in ['NC', 'DAC', 'TTC', 'EP', 'Comfortability', 'ALL', 'WO_COMF', 'WO_NC', 'WO_DAC', 'WO_TTC', 'WO_EP', 'WO_COMF']"
-        if self.sim_head_type == 'ALL':
-            assert self.sim_reward_nums == 5, "sim_reward_nums must be 5 when sim_head_type is ALL"
+        if self.use_sim_reward:
+            assert self.sim_head_type in ['NC', 'DAC', 'EP', 'TTC', 'Comfortability', 'ALL', 'WO_NC', 'WO_DAC', 'WO_EP', 'WO_TTC', 'WO_COMF'], "sim_head_type must be in ['NC', 'DAC', 'EP', 'TTC', 'Comfortability', 'ALL', 'WO_COMF', 'WO_NC', 'WO_DAC', 'WO_EP', 'WO_TTC', 'WO_COMF']"
+            if self.sim_head_type == 'ALL':
+                assert self.sim_reward_nums == 5, "sim_reward_nums must be 5 when sim_head_type is ALL"
         self.sim_head_mapping = sim_head_mapping
 
         if self.extra_bev_adapter:
@@ -490,7 +491,7 @@ class RewardConvNet(nn.Module):
             best_traj_a_im_reward = im_traj_scores_a[:, torch.arange(times), best_traj_idx.squeeze(0)]  # [bs, times]
             
             # Imitation reward对齐损失
-            im_reward_alignment_loss = torch.nn.functional.mse_loss(im_traj_scores_b, best_traj_a_im_reward)
+            im_reward_alignment_loss = torch.nn.functional.mse_loss(im_traj_scores_b, best_traj_a_im_reward) / times
         else:
             im_reward_alignment_loss = 0
             best_traj_a = model_a_trajectories[:, :, 0]  # 使用第一个轨迹作为默认
@@ -533,7 +534,7 @@ class RewardConvNet(nn.Module):
             ).squeeze(-1)  # [bs, times, sim_reward_nums]
             
             # Simulation reward对齐损失
-            sim_reward_alignment_loss = torch.nn.functional.mse_loss(sim_traj_scores_b, best_traj_a_sim_reward)
+            sim_reward_alignment_loss = torch.nn.functional.mse_loss(sim_traj_scores_b, best_traj_a_sim_reward) / times
         else:
             sim_reward_alignment_loss = 0
 
@@ -642,7 +643,7 @@ class RewardConvNet(nn.Module):
         ).squeeze(-1)  # [bs, times, sim_reward_nums]
         
         # Simulation reward对齐损失
-        sim_reward_alignment_loss = torch.nn.functional.mse_loss(sim_traj_scores_b, best_traj_a_sim_reward)
+        sim_reward_alignment_loss = torch.nn.functional.mse_loss(sim_traj_scores_b, best_traj_a_sim_reward) / times
 
         losses = {}
 

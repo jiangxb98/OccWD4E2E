@@ -127,7 +127,7 @@ future_reward_model_frame_idx = [0, 1, 2, 3, 4, 5]
 plan_traj_for_sim_reward_epoch = 999999   # 这个是启动simulation reward的epoch
 random_select = True
 
-start_pred_occ_epoch = 6  # 从哪个epoch开始使用预测的occupancy来计算sim_reward, 20251017最优epoch是6if_detach_sim = True
+start_pred_occ_epoch = 3  # 从哪个epoch开始使用预测的occupancy来计算sim_reward, 20251017最优epoch是6if_detach_sim = True
 if_detach_sim = True
 training_same_as_inference = True
 

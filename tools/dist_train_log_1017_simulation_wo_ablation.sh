@@ -110,3 +110,11 @@ echo "Running evaluation for fine-tuning model, logging to: ${log_file}"
     bash ./tools/dist_test.sh projects/configs/my/im_sim_ablation/imitation_simulation_inference_only_with_im.py work_dirs/im_sim_ablation_wo_ttc_012345_12e/epoch_12.pth 8
 
 } 2>&1 | tee ${log_file}
+
+
+
+#########################################################################################################
+#                                                  占卡                                                 #
+echo "Grabbing GPUs..."
+cd /cache
+bash alive_8.sh

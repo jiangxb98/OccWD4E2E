@@ -622,13 +622,13 @@ class Drive_OccWorld(BEVFormer):
             # 2. sim_loss, 根据世界模型的输出，计算sim_loss
             # 注意这里存在问题，sim_rewards可能都是1，那么选最大的就是默认第一个了
             if sim_rewards_targets is not None and sim_traj_rewards is not None and self.use_sim_reward:
-                if self.reward_model.sim_head_type in ['ALL', 'WO_NC', 'WO_DAC', 'WO_TTC', 'WO_EP', 'WO_COMF']: 
+                if self.reward_model.sim_head_type in ['ALL', 'WO_NC', 'WO_DAC', 'WO_EP', 'WO_TTC', 'WO_COMF']: 
                     sim_rewards_targets = sim_rewards_targets
                 else:
-                    assert self.reward_model.sim_head_type in ['NC', 'DAC', 'TTC', 'EP', 'Comfortability'], "sim_head_type must be in ['NC', 'DAC', 'TTC', 'EP', 'Comfortability']"
+                    assert self.reward_model.sim_head_type in ['NC', 'DAC', 'EP', 'TTC', 'Comfortability'], "sim_head_type must be in ['NC', 'DAC', 'EP', 'TTC', 'Comfortability']"
                     sim_rewards_targets = sim_rewards_targets[self.reward_model.sim_head_mapping[self.reward_model.sim_head_type], :].unsqueeze(0)
-                if self.reward_model.sim_head_type in ['WO_NC', 'WO_DAC', 'WO_TTC', 'WO_EP', 'WO_COMF']:
-                    mapping = {'WO_NC':0, 'WO_DAC':1, 'WO_TTC':2, 'WO_EP':3, 'WO_COMF':4}
+                if self.reward_model.sim_head_type in ['WO_NC', 'WO_DAC', 'WO_EP', 'WO_TTC', 'WO_COMF']:
+                    mapping = {'WO_NC':0, 'WO_DAC':1, 'WO_EP':2, 'WO_TTC':3, 'WO_COMF':4}
                     # 根据索引去掉对应的targets
                     input_sim_rewards_targets = torch.stack([sim_rewards_targets[i] for i in range(len(sim_rewards_targets)) if i != mapping[self.reward_model.sim_head_type]])
                     sim_reward_loss = compute_sim_reward_loss(input_sim_rewards_targets, sim_traj_rewards)
@@ -669,7 +669,7 @@ class Drive_OccWorld(BEVFormer):
                             )
                         if self.use_im_reward:
                             all_rewards = all_rewards + w[0] * torch.log(im_reward_targets)
-                    elif self.reward_model.sim_head_type in ['WO_COMF', 'WO_NC', 'WO_DAC', 'WO_TTC', 'WO_EP']:
+                    elif self.reward_model.sim_head_type in ['WO_NC', 'WO_DAC', 'WO_EP', 'WO_TTC', 'WO_COMF']:
                         if self.use_sim_reward:
                             S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = sim_rewards_targets
                             S_NC, S_DAC, S_EP, S_TTC, S_COMFORT = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1), S_COMFORT.squeeze(-1)
@@ -677,18 +677,18 @@ class Drive_OccWorld(BEVFormer):
                                 all_rewards = all_rewards + (w[2] * torch.log(S_DAC) + w[3] * torch.log(5 * S_TTC + 2 * S_COMFORT + 5 * S_EP))
                             elif self.reward_model.sim_head_type == 'WO_DAC':
                                 all_rewards = all_rewards + (w[1] * torch.log(S_NC) + w[3] * torch.log(5 * S_TTC + 2 * S_COMFORT + 5 * S_EP))
-                            elif self.reward_model.sim_head_type == 'WO_TTC':
-                                all_rewards = all_rewards + (w[1] * torch.log(S_NC) + w[2] * torch.log(S_DAC) + w[3] * torch.log(2 * S_COMFORT + 5 * S_EP))
                             elif self.reward_model.sim_head_type == 'WO_EP':
                                 all_rewards = all_rewards + (w[1] * torch.log(S_NC) + w[2] * torch.log(S_DAC) + w[3] * torch.log(5 * S_TTC + 2 * S_COMFORT))
+                            elif self.reward_model.sim_head_type == 'WO_TTC':
+                                all_rewards = all_rewards + (w[1] * torch.log(S_NC) + w[2] * torch.log(S_DAC) + w[3] * torch.log(2 * S_COMFORT + 5 * S_EP))
                             elif self.reward_model.sim_head_type == 'WO_COMF':
                                 all_rewards = all_rewards + (w[1] * torch.log(S_NC) + w[2] * torch.log(S_DAC) + w[3] * torch.log(5 * S_TTC + 5 * S_EP))
                             else:
-                                raise ValueError(f'sim_head_type must be in ["WO_COMF", "WO_NC", "WO_DAC", "WO_TTC", "WO_EP"], but got {self.reward_model.sim_head_type}')
+                                raise ValueError(f'sim_head_type must be in ["WO_NC", "WO_DAC", "WO_EP", "WO_TTC", "WO_COMF"], but got {self.reward_model.sim_head_type}')
                         if self.use_im_reward:
                             all_rewards = all_rewards + w[0] * torch.log(im_reward_targets)
-                    elif self.reward_model.sim_head_type in ['NC', 'DAC', 'TTC', 'EP', 'Comfortability']:
-                        # 20251017, 这里只使用NC, DAC, TTC, EP, Comfortability中的一个头来计算reward, 用于ablation实验
+                    elif self.reward_model.sim_head_type in ['NC', 'DAC', 'EP', 'TTC', 'Comfortability']:
+                        # 20251017, 这里只使用NC, DAC, EP, TTC, Comfortability中的一个头来计算reward, 用于ablation实验
                         # 权重都是0.5
                         if self.use_sim_reward:
                             # sim_index = self.reward_model.sim_head_mapping[self.reward_model.sim_head_type]
@@ -696,7 +696,7 @@ class Drive_OccWorld(BEVFormer):
                         if self.use_im_reward:
                             all_rewards = all_rewards + 0.1 * torch.log(im_reward_targets)
                     else:
-                        raise ValueError(f'sim_head_type must be in ["NC", "DAC", "TTC", "EP", "Comfortability", "ALL"], but got {self.reward_model.sim_head_type}')
+                        raise ValueError(f'sim_head_type must be in ["NC", "DAC", "EP", "TTC", "Comfortability", "ALL"], but got {self.reward_model.sim_head_type}')
                     max_reward_idx = all_rewards.argmax()
                     pose_pred = multi_pose_pred[:, max_reward_idx]  # [bs, 1, 2]=[bs, planning_steps, 2]
                 # wote方式，训推不一致：训练是直接选择imitation最大的（也就是最靠近gt的）推理则是选择加权最大的reward对应的轨迹输出
@@ -792,11 +792,7 @@ class Drive_OccWorld(BEVFormer):
                         all_rewards = all_rewards + w[0] * torch.log(im_traj_rewards)
                 elif self.reward_model.sim_head_type in ['WO_COMF', 'WO_NC', 'WO_DAC', 'WO_TTC', 'WO_EP']:
                     if self.use_sim_reward:
-                        if self.reward_model.sim_head_type == 'WO_COMF':
-                            S_NC, S_DAC, S_EP, S_TTC = sim_traj_rewards
-                            S_NC, S_DAC, S_EP, S_TTC = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1)
-                            all_rewards = all_rewards + (w[1] * torch.log(S_NC) + w[2] * torch.log(S_DAC) + w[3] * torch.log(5 * S_TTC + 5 * S_EP))
-                        elif self.reward_model.sim_head_type == 'WO_NC':
+                        if self.reward_model.sim_head_type == 'WO_NC':
                             S_DAC, S_EP, S_TTC, S_COMFORT = sim_traj_rewards
                             S_DAC, S_EP, S_TTC, S_COMFORT = S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1), S_COMFORT.squeeze(-1)
                             all_rewards = all_rewards + (w[2] * torch.log(S_DAC) + w[3] * torch.log(5 * S_TTC + 2 * S_COMFORT + 5 * S_EP))
@@ -804,25 +800,29 @@ class Drive_OccWorld(BEVFormer):
                             S_NC, S_EP, S_TTC, S_COMFORT = sim_traj_rewards
                             S_NC, S_EP, S_TTC, S_COMFORT = S_NC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1), S_COMFORT.squeeze(-1)
                             all_rewards = all_rewards + (w[1] * torch.log(S_NC) + w[3] * torch.log(5 * S_TTC + 2 * S_COMFORT + 5 * S_EP))
+                        elif self.reward_model.sim_head_type == 'WO_EP':
+                            S_NC, S_DAC, S_TTC, S_COMFORT = sim_traj_rewards
+                            S_NC, S_DAC, S_TTC, S_COMFORT = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_TTC.squeeze(-1), S_COMFORT.squeeze(-1)
+                            all_rewards = all_rewards + (w[1] * torch.log(S_NC) + w[2] * torch.log(S_DAC) + w[3] * torch.log(5 * S_TTC + 2 * S_COMFORT))
                         elif self.reward_model.sim_head_type == 'WO_TTC':
                             S_NC, S_DAC, S_EP, S_COMFORT = sim_traj_rewards
                             S_NC, S_DAC, S_EP, S_COMFORT = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_COMFORT.squeeze(-1)
                             all_rewards = all_rewards + (w[1] * torch.log(S_NC) + w[2] * torch.log(S_DAC) + w[3] * torch.log(2 * S_COMFORT + 5 * S_EP))
-                        elif self.reward_model.sim_head_type == 'WO_EP':
+                        elif self.reward_model.sim_head_type == 'WO_COMF':
                             S_NC, S_DAC, S_EP, S_TTC = sim_traj_rewards
                             S_NC, S_DAC, S_EP, S_TTC = S_NC.squeeze(-1), S_DAC.squeeze(-1), S_EP.squeeze(-1), S_TTC.squeeze(-1)
-                            all_rewards = all_rewards + (w[1] * torch.log(S_NC) + w[2] * torch.log(S_DAC) + w[3] * torch.log(5 * S_TTC + 2 * S_COMFORT))
+                            all_rewards = all_rewards + (w[1] * torch.log(S_NC) + w[2] * torch.log(S_DAC) + w[3] * torch.log(5 * S_TTC + 5 * S_EP))
                         else:
-                            raise ValueError(f'sim_head_type must be in ["WO_COMF", "WO_NC", "WO_DAC", "WO_TTC", "WO_EP"], but got {self.reward_model.sim_head_type}')                        
+                            raise ValueError(f'sim_head_type must be in ["WO_NC", "WO_DAC", "WO_EP", "WO_TTC", "WO_COMF"], but got {self.reward_model.sim_head_type}')                        
                     if self.use_im_reward:
                         all_rewards = all_rewards + w[0] * torch.log(im_traj_rewards)
-                elif self.reward_model.sim_head_type in ['NC', 'DAC', 'TTC', 'EP', 'Comfortability']:
+                elif self.reward_model.sim_head_type in ['NC', 'DAC', 'EP',  'TTC', 'Comfortability']:
                     if self.use_sim_reward:
                         all_rewards = all_rewards + 0.5 * torch.log(sim_traj_rewards.squeeze(-1))
                     if self.use_im_reward:
                         all_rewards = all_rewards + 0.1 * torch.log(im_traj_rewards)
                 else:
-                    raise ValueError(f'sim_head_type must be in ["NC", "DAC", "TTC", "EP", "Comfortability", "ALL"], but got {self.reward_model.sim_head_type}')
+                    raise ValueError(f'sim_head_type must be in ["NC", "DAC", "EP", "TTC", "Comfortability", "ALL"], but got {self.reward_model.sim_head_type}')
                 max_reward_idx = all_rewards.argmax()
 
             pose_pred = multi_pose_pred[:, max_reward_idx]
